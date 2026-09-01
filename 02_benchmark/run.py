@@ -1,0 +1,159 @@
+"""The latency benchmark.
+
+Plain asyncio + httpx on purpose: this file is short enough that you can read it
+and know exactly what your numbers mean. That is part of the exercise.
+
+How it works
+------------
+1. Load the frozen question corpus (deliberate duplicates included).
+2. Fire a few warm-up requests and throw them away, so first-call overhead does
+   not pollute the measurement.
+3. Generate load with POISSON ARRIVALS at --rate, with --concurrency as a
+   separate cap on requests in flight. Real traffic arrives at a rate; it does
+   not all show up at once. A benchmark that fires everything simultaneously
+   reports a TTFT that no user would ever experience.
+4. Time every request individually off the streamed response: TTFT from the
+   first chunk, end-to-end from the last, inter-token latency from the gaps.
+   The server reports its own queue-wait/compute split in the final event.
+5. Aggregate into PERCENTILES, not averages. The tail is the whole lesson.
+6. Price it from scenario.json and judge it against the SLO and the budget.
+"""
+import argparse
+import asyncio
+import json
+import pathlib
+import random
+import time
+
+import httpx
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+SCENARIO = json.loads((ROOT / "scenario.json").read_text())
+PROMPTS = [json.loads(line) for line in
+           (ROOT / "02_benchmark" / "prompts.jsonl").read_text().splitlines() if line.strip()]
+RESULTS = ROOT / "results"
+
+
+async def one_request(client, url, question, results, sem):
+    async with sem:
+        sent = time.perf_counter()
+        ttft = None
+        chunk_times = []
+        stats = {}
+        try:
+            async with client.stream("POST", f"{url}/ask",
+                                     json={"question": question}) as resp:
+                if resp.status_code == 429:
+                    await resp.aread()
+                    results.append({"ok": False, "shed": True})
+                    return
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    payload = line[6:]
+                    if payload == "[DONE]":
+                        break
+                    event = json.loads(payload)
+                    if "delta" in event:
+                        now = time.perf_counter()
+                        if ttft is None:
+                            ttft = now - sent
+                        chunk_times.append(now)
+                    elif "stats" in event:
+                        stats = event["stats"]
+        except Exception as exc:  # noqa: BLE001
+            results.append({"ok": False, "shed": False, "error": repr(exc)})
+            return
+
+        end = time.perf_counter()
+        itls = [b - a for a, b in zip(chunk_times, chunk_times[1:])]
+        results.append({
+            "ok": True, "shed": False,
+            "latency_s": end - sent,
+            "ttft_s": ttft if ttft is not None else end - sent,
+            "itl_ms": (sum(itls) / len(itls) * 1000) if itls else 0.0,
+            "queue_wait_ms": stats.get("queue_wait_ms", 0.0),
+            "compute_ms": stats.get("compute_ms", 0.0),
+            "tokens_in": stats.get("tokens_in", 0),
+            "tokens_out": stats.get("tokens_out", 0),
+            "tokens_cached": stats.get("tokens_cached", 0),
+            "cache": stats.get("cache", "miss"),
+            "tier": stats.get("tier", "-"),
+        })
+
+
+async def drive(url, questions, rate, concurrency):
+    """Poisson arrivals at `rate` req/s, at most `concurrency` in flight."""
+    sem = asyncio.Semaphore(concurrency)
+    results: list[dict] = []
+    rng = random.Random(20260831)
+    started = time.perf_counter()
+    tasks = []
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        for q in questions:
+            tasks.append(asyncio.create_task(
+                one_request(client, url, q, results, sem)))
+            await asyncio.sleep(rng.expovariate(rate))
+        await asyncio.gather(*tasks)
+    return results, time.perf_counter() - started
+
+
+async def warmup(url, n):
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        for i in range(n):
+            try:
+                async with client.stream("POST", f"{url}/ask",
+                                         json={"question": PROMPTS[i]["question"],
+                                               "max_tokens": 4}) as r:
+                    async for _ in r.aiter_lines():
+                        pass
+            except Exception:  # noqa: BLE001, S110
+                pass
+
+
+def main() -> None:
+    d = SCENARIO["bench_defaults"]
+    p = argparse.ArgumentParser(description="Benchmark your Nimbus deployment.")
+    p.add_argument("--url", default="http://127.0.0.1:8000")
+    p.add_argument("--requests", type=int, default=d["requests"])
+    p.add_argument("--rate", type=float, default=d["rate"],
+                   help="arrivals per second (Poisson)")
+    p.add_argument("--concurrency", type=int, default=d["concurrency"])
+    p.add_argument("--warmup", type=int, default=d["warmup"])
+    p.add_argument("--label", default="", help="note to yourself, e.g. 'cache on'")
+    args = p.parse_args()
+
+    questions = [PROMPTS[i % len(PROMPTS)]["question"] for i in range(args.requests)]
+
+    # Record what the server was actually running. Reading it from /metrics
+    # rather than from config.py means the report describes the deployment you
+    # measured, not the file you happen to have open in your editor.
+    server_config = {}
+    try:
+        server_config = httpx.get(f"{args.url}/metrics", timeout=10).json().get("config", {})
+    except Exception:  # noqa: BLE001
+        pass
+
+    print(f"warming up ({args.warmup} requests, discarded)...", flush=True)
+    asyncio.run(warmup(args.url, args.warmup))
+
+    print(f"benchmarking {args.requests} requests at {args.rate}/s, "
+          f"concurrency {args.concurrency}...", flush=True)
+    results, duration = asyncio.run(
+        drive(args.url, questions, args.rate, args.concurrency))
+
+    RESULTS.mkdir(exist_ok=True)
+    run_no = len(list(RESULTS.glob("run-*.json"))) + 1
+    payload = {"run": run_no, "label": args.label, "duration_s": duration,
+               "args": vars(args), "server_config": server_config, "results": results}
+    (RESULTS / f"run-{run_no}.json").write_text(json.dumps(payload, indent=2))
+
+    from report import render          # noqa: PLC0415
+    print(render(payload, SCENARIO, RESULTS))
+
+
+if __name__ == "__main__":
+    import sys
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))
+    main()

@@ -1,0 +1,236 @@
+[
+  {
+    "label": "Large model, full context (as shipped)",
+    "score_pct": 94.4,
+    "extraction_pct": 91.7,
+    "reasoning_pct": 100.0,
+    "hits": 34,
+    "total": 36,
+    "config": {
+      "RESPONSE_CACHE": false,
+      "PREFIX_CACHE": false,
+      "SEMANTIC_CACHE": false,
+      "MAX_TOKENS": 32,
+      "SYSTEM_PROMPT": "LONG",
+      "RETRIEVE_K": 4,
+      "ROUTE_EASY": false,
+      "MODEL_TIER": "large",
+      "MAX_CONCURRENT": 2,
+      "REPLICAS": 1,
+      "SHED_ABOVE_QUEUE": null
+    },
+    "missed": [
+      "What is L1 regularisation?",
+      "What does the 'finally' block do in Python?"
+    ]
+  },
+  {
+    "label": "Large model, trimmed system prompt",
+    "score_pct": 97.2,
+    "extraction_pct": 100.0,
+    "reasoning_pct": 91.7,
+    "hits": 35,
+    "total": 36,
+    "config": {
+      "RESPONSE_CACHE": false,
+      "PREFIX_CACHE": false,
+      "SEMANTIC_CACHE": false,
+      "MAX_TOKENS": 32,
+      "SYSTEM_PROMPT": "TRIMMED",
+      "RETRIEVE_K": 4,
+      "ROUTE_EASY": false,
+      "MODEL_TIER": "large",
+      "MAX_CONCURRENT": 2,
+      "REPLICAS": 1,
+      "SHED_ABOVE_QUEUE": null
+    },
+    "missed": [
+      "Which is more affected by a single extreme outlier, the mean or the median?"
+    ]
+  },
+  {
+    "label": "Large model, reduced context (K=2)",
+    "score_pct": 91.7,
+    "extraction_pct": 91.7,
+    "reasoning_pct": 91.7,
+    "hits": 33,
+    "total": 36,
+    "config": {
+      "RESPONSE_CACHE": false,
+      "PREFIX_CACHE": false,
+      "SEMANTIC_CACHE": false,
+      "MAX_TOKENS": 32,
+      "SYSTEM_PROMPT": "LONG",
+      "RETRIEVE_K": 2,
+      "ROUTE_EASY": false,
+      "MODEL_TIER": "large",
+      "MAX_CONCURRENT": 2,
+      "REPLICAS": 1,
+      "SHED_ABOVE_QUEUE": null
+    },
+    "missed": [
+      "What is L1 regularisation?",
+      "What happens if I submit an assignment late?",
+      "Which is more affected by a single extreme outlier, the mean or the median?"
+    ]
+  },
+  {
+    "label": "Large model, shorter answers (24 tokens)",
+    "score_pct": 91.7,
+    "extraction_pct": 91.7,
+    "reasoning_pct": 91.7,
+    "hits": 33,
+    "total": 36,
+    "config": {
+      "RESPONSE_CACHE": false,
+      "PREFIX_CACHE": false,
+      "SEMANTIC_CACHE": false,
+      "MAX_TOKENS": 24,
+      "SYSTEM_PROMPT": "LONG",
+      "RETRIEVE_K": 4,
+      "ROUTE_EASY": false,
+      "MODEL_TIER": "large",
+      "MAX_CONCURRENT": 2,
+      "REPLICAS": 1,
+      "SHED_ABOVE_QUEUE": null
+    },
+    "missed": [
+      "What is L1 regularisation?",
+      "What does the 'finally' block do in Python?",
+      "My recursive function crashes with RecursionError on large inputs. What would you change?"
+    ]
+  },
+  {
+    "label": "Routing: easy -> small, hard -> large",
+    "score_pct": 91.7,
+    "extraction_pct": 87.5,
+    "reasoning_pct": 100.0,
+    "hits": 33,
+    "total": 36,
+    "config": {
+      "RESPONSE_CACHE": false,
+      "PREFIX_CACHE": false,
+      "SEMANTIC_CACHE": false,
+      "MAX_TOKENS": 32,
+      "SYSTEM_PROMPT": "LONG",
+      "RETRIEVE_K": 4,
+      "ROUTE_EASY": true,
+      "MODEL_TIER": "large",
+      "MAX_CONCURRENT": 2,
+      "REPLICAS": 1,
+      "SHED_ABOVE_QUEUE": null
+    },
+    "missed": [
+      "What is Big-O notation?",
+      "What is L1 regularisation?",
+      "What does the 'finally' block do in Python?"
+    ]
+  },
+  {
+    "label": "Small model for EVERYTHING",
+    "score_pct": 77.8,
+    "extraction_pct": 83.3,
+    "reasoning_pct": 66.7,
+    "hits": 28,
+    "total": 36,
+    "config": {
+      "RESPONSE_CACHE": false,
+      "PREFIX_CACHE": false,
+      "SEMANTIC_CACHE": false,
+      "MAX_TOKENS": 32,
+      "SYSTEM_PROMPT": "LONG",
+      "RETRIEVE_K": 4,
+      "ROUTE_EASY": false,
+      "MODEL_TIER": "small",
+      "MAX_CONCURRENT": 2,
+      "REPLICAS": 1,
+      "SHED_ABOVE_QUEUE": null
+    },
+    "missed": [
+      "What is Big-O notation?",
+      "What sorting algorithm does Python use?",
+      "What is L1 regularisation?",
+      "What happens if I submit an assignment late?",
+      "My dataset is 99% one class. Why is accuracy a bad metric here, and what should I use?",
+      "My gradient descent loss keeps oscillating and getting bigger. What is the most likely cause?",
+      "I standardised my features before training a decision tree and nothing changed. Why?",
+      "I want to reduce my feature count automatically. Which regularisation should I pick?"
+    ]
+  },
+  {
+    "label": "Semantic cache, threshold 0.92",
+    "score_pct": 94.4,
+    "extraction_pct": 91.7,
+    "reasoning_pct": 100.0,
+    "hits": 34,
+    "total": 36,
+    "config": {
+      "RESPONSE_CACHE": false,
+      "PREFIX_CACHE": false,
+      "SEMANTIC_CACHE": true,
+      "MAX_TOKENS": 32,
+      "SYSTEM_PROMPT": "LONG",
+      "RETRIEVE_K": 4,
+      "ROUTE_EASY": false,
+      "MODEL_TIER": "large",
+      "MAX_CONCURRENT": 2,
+      "REPLICAS": 1,
+      "SHED_ABOVE_QUEUE": null
+    },
+    "missed": [
+      "What is L1 regularisation?",
+      "What does the 'finally' block do in Python?"
+    ]
+  },
+  {
+    "label": "Semantic cache, threshold 0.80",
+    "score_pct": 94.4,
+    "extraction_pct": 91.7,
+    "reasoning_pct": 100.0,
+    "hits": 34,
+    "total": 36,
+    "config": {
+      "RESPONSE_CACHE": false,
+      "PREFIX_CACHE": false,
+      "SEMANTIC_CACHE": true,
+      "MAX_TOKENS": 32,
+      "SYSTEM_PROMPT": "LONG",
+      "RETRIEVE_K": 4,
+      "ROUTE_EASY": false,
+      "MODEL_TIER": "large",
+      "MAX_CONCURRENT": 2,
+      "REPLICAS": 1,
+      "SHED_ABOVE_QUEUE": null
+    },
+    "missed": [
+      "What is L1 regularisation?",
+      "What does the 'finally' block do in Python?"
+    ]
+  },
+  {
+    "label": "Everything on (rungs 2-4)",
+    "score_pct": 91.7,
+    "extraction_pct": 91.7,
+    "reasoning_pct": 91.7,
+    "hits": 33,
+    "total": 36,
+    "config": {
+      "RESPONSE_CACHE": true,
+      "PREFIX_CACHE": true,
+      "SEMANTIC_CACHE": true,
+      "MAX_TOKENS": 24,
+      "SYSTEM_PROMPT": "TRIMMED",
+      "RETRIEVE_K": 3,
+      "ROUTE_EASY": true,
+      "MODEL_TIER": "large",
+      "MAX_CONCURRENT": 2,
+      "REPLICAS": 1,
+      "SHED_ABOVE_QUEUE": null
+    },
+    "missed": [
+      "What is Big-O notation?",
+      "What is L1 regularisation?",
+      "Which is more affected by a single extreme outlier, the mean or the median?"
+    ]
+  }
+]

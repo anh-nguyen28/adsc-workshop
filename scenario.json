@@ -1,0 +1,37 @@
+{
+  "_comment": "LOCKED for the exercise. Illustrative, rounded, frozen. Do not edit during the workshop.",
+  "company": "Nimbus",
+  "feature": "AI study assistant for university courses",
+  "incident": "Went viral during finals week. Traffic is 5x normal and climbing.",
+  "constraints": {
+    "slo_p95_latency_s": 5.0,
+    "budget_usd_per_month": 1500,
+    "quality_bar_eval_pct": 80,
+    "_comment": "SLO set from measured data: the ladder reaches it at rung 4 on a 4-core laptop and rung 5 on a 2-core Codespace. Re-measure on your own hardware before the session -- latency is hardware-dependent, cost is not."
+  },
+  "traffic": {
+    "requests_per_day": 150000,
+    "qps_peak": 45,
+    "note": "Monthly cost is projected from requests_per_day x 30. Projecting from peak QPS held 24/7 would imply 116M requests a month, which is not what a campus tool looks like."
+  },
+  "prices": {
+    "_comment": "USD per 1M tokens, plus a flat monthly cost per replica. cached_input is the discounted rate for tokens served from the prefix cache -- 10% of the normal input rate, which is roughly what commercial providers charge.",
+    "small": {
+      "input": 0.05,
+      "output": 0.2,
+      "cached_input": 0.005
+    },
+    "large": {
+      "input": 0.6,
+      "output": 2.4,
+      "cached_input": 0.06
+    },
+    "replica_usd_per_month": 300
+  },
+  "bench_defaults": {
+    "requests": 16,
+    "rate": 4.0,
+    "concurrency": 8,
+    "warmup": 2
+  }
+}

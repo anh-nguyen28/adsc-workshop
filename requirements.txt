@@ -1,0 +1,55 @@
+# Nimbus workshop -- fully pinned dependencies.
+#
+# Single source of truth for setup: the devcontainer, `make setup` and CI all
+# install from here, so the two setup paths cannot drift.
+#
+# EVERY package is pinned, including transitive ones. Pinning only the direct
+# dependencies does not protect you: a workshop breaks just as thoroughly when
+# a library four levels down ships a new minor release the night before.
+#
+# torch comes from PyTorch's CPU-only index. On Linux the default PyPI wheel
+# bundles CUDA (~2.5 GB), which would make the Codespaces image build unusable
+# on a 2-core machine that will never see a GPU. Verified present for
+# cp311 manylinux_2_28_x86_64 (Codespaces) and macOS arm64 (local).
+--index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://pypi.org/simple
+
+# ---- direct dependencies ----
+fastapi==0.115.6
+httpx==0.28.1
+numpy==2.2.1
+torch==2.9.1
+transformers==4.57.6
+uvicorn==0.34.0
+
+# ---- transitive, pinned for reproducibility ----
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+PyYAML==6.0.3
+annotated-types==0.8.0
+anyio==4.14.2
+certifi==2026.7.22
+charset-normalizer==3.5.1
+click==8.5.0
+filelock==3.32.5
+fsspec==2026.7.0
+h11==0.16.0
+hf-xet==1.6.0
+httpcore==1.0.9
+huggingface_hub==0.36.2
+idna==3.19
+mpmath==1.3.0
+networkx==3.6.1
+packaging==26.3
+pydantic==2.13.5
+pydantic_core==2.46.5
+regex==2026.8.31
+requests==2.34.2
+safetensors==0.8.0
+starlette==0.41.3
+sympy==1.14.0
+tokenizers==0.22.2
+tqdm==4.70.0
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+urllib3==2.7.0

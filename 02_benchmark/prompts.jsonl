@@ -1,0 +1,60 @@
+{"question": "What is Big-O notation?", "kind": "base"}
+{"question": "What does the learning rate do?", "kind": "base"}
+{"question": "Define recursion.", "kind": "tail"}
+{"question": "What is overfitting?", "kind": "base"}
+{"question": "What is the role of the learning rate?", "kind": "near"}
+{"question": "When are office hours?", "kind": "base"}
+{"question": "Define variance.", "kind": "tail"}
+{"question": "What is cross-validation?", "kind": "base"}
+{"question": "What does it mean for a model to overfit?", "kind": "near"}
+{"question": "What is Big-O notation?", "kind": "base"}
+{"question": "What does the learning rate do?", "kind": "base"}
+{"question": "What is overfitting?", "kind": "base"}
+{"question": "What is a p-value?", "kind": "tail"}
+{"question": "When are office hours?", "kind": "base"}
+{"question": "What time are office hours held?", "kind": "near"}
+{"question": "What is cross-validation?", "kind": "base"}
+{"question": "Explain the LEGB scope rule in Python.", "kind": "tail"}
+{"question": "What is Big-O notation?", "kind": "base"}
+{"question": "Can you explain k-fold cross validation?", "kind": "near"}
+{"question": "What does the learning rate do?", "kind": "base"}
+{"question": "What is overfitting?", "kind": "base"}
+{"question": "When are office hours?", "kind": "base"}
+{"question": "What is the difference between a stack and a queue?", "kind": "tail"}
+{"question": "What is cross-validation?", "kind": "base"}
+{"question": "What is the role of the learning rate?", "kind": "near"}
+{"question": "What is Big-O notation?", "kind": "base"}
+{"question": "What sorting algorithm does Python use?", "kind": "tail"}
+{"question": "What does the learning rate do?", "kind": "base"}
+{"question": "What does it mean for a model to overfit?", "kind": "near"}
+{"question": "What is overfitting?", "kind": "base"}
+{"question": "When are office hours?", "kind": "base"}
+{"question": "What is cross-validation?", "kind": "base"}
+{"question": "How do I get an extension on an assignment?", "kind": "tail"}
+{"question": "What is Big-O notation?", "kind": "base"}
+{"question": "What time are office hours held?", "kind": "near"}
+{"question": "What does the learning rate do?", "kind": "base"}
+{"question": "What is feature scaling and when do I need it?", "kind": "tail"}
+{"question": "What is overfitting?", "kind": "base"}
+{"question": "Can you explain k-fold cross validation?", "kind": "near"}
+{"question": "When are office hours?", "kind": "base"}
+{"question": "What is cross-validation?", "kind": "base"}
+{"question": "What is Big-O notation?", "kind": "base"}
+{"question": "How long is the midterm?", "kind": "tail"}
+{"question": "What does the learning rate do?", "kind": "base"}
+{"question": "What is the role of the learning rate?", "kind": "near"}
+{"question": "What is overfitting?", "kind": "base"}
+{"question": "What is the normal distribution?", "kind": "tail"}
+{"question": "When are office hours?", "kind": "base"}
+{"question": "What does it mean for a model to overfit?", "kind": "near"}
+{"question": "What is cross-validation?", "kind": "base"}
+{"question": "What is Big-O notation?", "kind": "base"}
+{"question": "What does the learning rate do?", "kind": "base"}
+{"question": "What happens if I submit an assignment late?", "kind": "tail"}
+{"question": "What is overfitting?", "kind": "base"}
+{"question": "What time are office hours held?", "kind": "near"}
+{"question": "When are office hours?", "kind": "base"}
+{"question": "What is a confidence interval?", "kind": "tail"}
+{"question": "What is cross-validation?", "kind": "base"}
+{"question": "Can you explain k-fold cross validation?", "kind": "near"}
+{"question": "What is Big-O notation?", "kind": "base"}
