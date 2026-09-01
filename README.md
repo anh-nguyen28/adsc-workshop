@@ -186,26 +186,38 @@ make bench
 
 **What to expect:**
 - The benchmark simulates 8 concurrent students asking questions
-- Runs 16 questions total (~30 seconds)
+- Runs 16 questions total — the baseline takes ~45–50 seconds on a 4-core laptop,
+  longer on a 2-core Codespace. Later rungs finish in well under 15 seconds, because
+  the levers reduce real work.
 - Produces a detailed report with latency percentiles and cost
 
-**Read the report carefully:**
+**Read the report carefully.** Abridged, with the numbers a clean baseline run
+produced on a 4-core laptop:
 
 ```
-┌─────────────────────────────────────────────┐
-│ LATENCY REPORT (milliseconds)               │
-├─────────────────────────────────────────────┤
-│ P50 (median)  : 2,500 ms                    │
-│ P95           : 8,420 ms    ← You need <5s  │
-│ P99           : 9,100 ms                    │
-│
-│ Queue wait p95  : 6,200 ms    ← People waiting
-│ Compute p95     : 2,220 ms    ← Model working
-├─────────────────────────────────────────────┤
-│ COST: $3,200/month (target: $1,500)         │ ← Budget busted
-│ PASS: ❌ FAIL                               │
-└─────────────────────────────────────────────┘
+NIMBUS BENCHMARK - run 1
+================================================================
+requests     16 ok · 0 shed · 0 failed
+
+latency      p95       25.19 s   SLO 5.00 s   FAIL
+             note: with 16 requests, "p95" is the slowest
+             request, not a true percentile. Repeat runs vary ~12%.
+
+             ── where the time went ──
+queue wait   p95       18.01 s   <- waiting in line
+compute      p95        7.41 s   <- actually working
+cache        response hit rate 0%
+
+cost         $2,697 / month @ 150,000/day   budget $1,500   FAIL
+
+----------------------------------------------------------------
+VERDICT  0/2 constraints met
+hint     queue wait exceeds compute. The model is not your problem.
 ```
+
+⚠️ **Your numbers will differ.** Latency depends on your hardware — a 2-core
+Codespace runs roughly 2× slower. Cost is computed from token counts, so it
+transfers unchanged. Compare against *your own* baseline, not this one.
 
 **Key numbers to write down:**
 - Queue wait p95: __________ ms
@@ -355,7 +367,7 @@ MAX_TOKENS = 32  # Default: 32
 - **Impact on latency:** Roughly linear — fewer tokens = proportionally faster
 - **Impact on quality:** Shorter answers might lose nuance (will show in eval card)
 
-**Tradeoff:** A study assistant can often answer in one sentence. Does it need 96 tokens?
+**Tradeoff:** A study assistant can often answer in one sentence. Does it need 32 tokens?
 
 ---
 
@@ -570,22 +582,25 @@ adsc-workshop/                           ← You are here
 │   ├── README.md                        ← How to interpret results
 │   ├── run.py                           ← Load generator (realistic traffic)
 │   ├── report.py                        ← Latency percentiles, cost, PASS/FAIL
-│   ├── prompts.jsonl                    ← 100 pre-generated questions
+│   ├── prompts.jsonl                    ← 60 pre-generated questions
+│   ├── decision_sheet.md                ⭐ Fill this in as you go
+│   ├── eval_card.md                     ⭐ Measured quality per config
 │   └── paper_track.md                   ← Fallback if laptop fails
 │
 ├── data/                                ← Course notes database
-│   ├── notes.json                       ← Raw course content
-│   ├── index.npz                        ← Pre-built search index
+│   ├── course_notes/                    ← Raw course content (3 markdown files)
+│   ├── index.npz                        ← Search index (built by `make setup`)
 │   └── build_index.py                   ← Regenerate index (rarely needed)
 │
 ├── results/                             ← Your benchmark results
 │   └── *.json                           ← One JSON file per run (auto-generated)
 │
 └── facilitators/                        ← Facilitator-only tools (ignore for now)
-    ├── calibrate.py                     ← Re-measure SLO on your hardware
-    ├── eval.py                          ← Quality evaluation
-    ├── eval_card.md                     ← Pre-computed quality results
-    └── answer_key.md                    ← Correct answers to eval questions
+    ├── runsheet.md                      ← How to run the session
+    ├── failure_playbook.md              ← When something breaks live
+    ├── calibrate.py                     ← Re-measure the SLO on your hardware
+    ├── eval.py / eval_all.py            ← Quality evaluation harness
+    └── answer_key.md                    ← The measured ladder (spoilers)
 ```
 
 ---
@@ -756,7 +771,7 @@ make bench
 
 **This is intentional:** We're measuring the *system*, not judging the model. Latency and queueing work the same whether the model has 135M or 405B parameters.
 
-Quality is measured separately (see `facilitators/eval_card.md`).
+Quality is measured separately (see [`02_benchmark/eval_card.md`](02_benchmark/eval_card.md)).
 
 ---
 
@@ -811,5 +826,5 @@ But the *principle* stays the same: **measure, diagnose, change one thing, measu
 
 - [`01_deploy/README.md`](01_deploy/README.md) — Service internals
 - [`02_benchmark/README.md`](02_benchmark/README.md) — Understanding benchmark reports
-- `presentation-core-ideas.md` — The talk this activity supports
-- `CLAUDE.md` — Project design principles & invariants
+- [`02_benchmark/eval_card.md`](02_benchmark/eval_card.md) — Measured quality for every configuration
+- [`02_benchmark/decision_sheet.md`](02_benchmark/decision_sheet.md) — The worksheet you fill in as you go
