@@ -11,7 +11,7 @@ key belongs in the container or repository.
 import asyncio
 import json
 import os
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 import httpx
 
@@ -41,6 +41,13 @@ def _model_id(tier: str) -> str:
     if tier == "small":
         return os.environ.get("NIMBUS_GOOGLE_MODEL_SMALL", "mistral-small-2503")
     return os.environ.get("NIMBUS_GOOGLE_MODEL_LARGE", "mistral-small-2503")
+
+
+def _wire_model_id(model_id: str) -> str:
+    """Return the identifier expected by the selected Google endpoint."""
+    if _api_style() == "openai":
+        return os.environ.get("NIMBUS_GOOGLE_OPENAI_MODEL_ID", model_id)
+    return model_id
 
 
 def _load_credentials() -> None:
@@ -85,6 +92,8 @@ def _endpoint(model_id: str) -> str:
     location = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
     project = _project or os.environ.get("GOOGLE_CLOUD_PROJECT")
     host = f"{location}-aiplatform.googleapis.com"
+    if not project:
+        raise ProviderError("GOOGLE_CLOUD_PROJECT is not set")
     if _api_style() == "mistral":
         return (f"https://{host}/v1/projects/{project}/locations/{location}/"
                 f"publishers/mistralai/models/{model_id}:streamRawPredict")
@@ -99,8 +108,8 @@ def runtime_info() -> dict:
         "provider": "google",
         "api_style": _api_style(),
         "location": location,
-        "model_small": _model_id("small"),
-        "model_large": _model_id("large"),
+        "model_small": _wire_model_id(_model_id("small")),
+        "model_large": _wire_model_id(_model_id("large")),
     }
 
 
@@ -126,50 +135,124 @@ def _usage(stats: dict, payload: dict) -> None:
     stats["usage_source"] = "provider"
 
 
+def _content_parts(payload: dict[str, Any]) -> list[str]:
+    """Extract text from both streaming chunks and complete chat responses."""
+    parts: list[str] = []
+    for choice in payload.get("choices", []):
+        delta = choice.get("delta") or {}
+        message = choice.get("message") or {}
+        content = delta.get("content")
+        if content is None:
+            content = message.get("content")
+        if isinstance(content, str):
+            parts.append(content)
+        elif isinstance(content, list):
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict) and isinstance(item.get("text"), str):
+                    parts.append(item["text"])
+    return parts
+
+
+def _data_line(line: str) -> str | None:
+    """Return an SSE data payload, accepting both ``data:`` spellings."""
+    if not line.startswith("data:"):
+        return None
+    raw = line[5:].lstrip()
+    return raw or None
+
+
 async def _stream_once(model_id: str, prompt: str, max_tokens: int,
                        stats: dict) -> AsyncIterator[str]:
     token = await _access_token()
     payload = {
-        "model": model_id,
+        "model": _wire_model_id(model_id),
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": max_tokens,
+        "temperature": 0,
         "stream": True,
     }
-    async with _http_client().stream(
-            "POST", _endpoint(model_id),
-            headers={"Authorization": f"Bearer {token}",
-                     "Content-Type": "application/json"},
-            json=payload) as response:
-        if response.status_code == 429 or response.status_code >= 500:
-            detail = (await response.aread()).decode(errors="replace")[:500]
-            raise RetryableProviderError(
-                f"Google model returned HTTP {response.status_code}: {detail}")
-        if response.status_code >= 400:
-            detail = (await response.aread()).decode(errors="replace")[:500]
-            raise ProviderError(
-                f"Google model returned HTTP {response.status_code}: {detail}")
+    emitted = False
+    try:
+        async with _http_client().stream(
+                "POST", _endpoint(model_id),
+                headers={"Authorization": f"Bearer {token}",
+                         "Accept": "text/event-stream, application/json",
+                         "Content-Type": "application/json"},
+                json=payload) as response:
+            if response.status_code in {408, 425, 429} or response.status_code >= 500:
+                detail = (await response.aread()).decode(errors="replace")[:500]
+                raise RetryableProviderError(
+                    f"Google model returned HTTP {response.status_code}: {detail}")
+            if response.status_code >= 400:
+                detail = (await response.aread()).decode(errors="replace")[:500]
+                raise ProviderError(
+                    f"Google model returned HTTP {response.status_code}: {detail}")
 
-        async for line in response.aiter_lines():
-            if not line.startswith("data: "):
-                continue
-            raw = line[6:]
-            if raw == "[DONE]":
-                break
-            try:
-                event = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            _usage(stats, event)
-            for choice in event.get("choices", []):
-                text = (choice.get("delta") or {}).get("content") or ""
-                if text:
-                    yield text
+            content_type = response.headers.get("content-type", "").lower()
+            if "event-stream" in content_type or "ndjson" in content_type:
+                async for line in response.aiter_lines():
+                    raw = _data_line(line)
+                    if raw is None:
+                        continue
+                    if raw == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    _usage(stats, event)
+                    for text in _content_parts(event):
+                        emitted = True
+                        yield text
+            else:
+                body = await response.aread()
+                try:
+                    events = [json.loads(body)]
+                except json.JSONDecodeError as exc:
+                    # Some gateways label newline-delimited provider chunks as
+                    # application/json. Accept those as well, but never turn a
+                    # malformed response into an empty successful answer.
+                    events = []
+                    for line in body.decode(errors="replace").splitlines():
+                        raw = _data_line(line) or line.strip()
+                        if not raw or raw == "[DONE]":
+                            continue
+                        try:
+                            events.append(json.loads(raw))
+                        except json.JSONDecodeError:
+                            continue
+                    if not events:
+                        raise ProviderError(
+                            "Google model returned an unreadable response") from exc
+                for event in events:
+                    _usage(stats, event)
+                    for text in _content_parts(event):
+                        emitted = True
+                        yield text
+    except httpx.RequestError as exc:
+        raise RetryableProviderError("Google model network request failed") from exc
+
+    if not emitted:
+        raise ProviderError("Google model returned no text")
 
 
 def warm() -> None:
     """Validate Google ADC during startup, before Cloud Run accepts traffic."""
     if _api_style() not in {"mistral", "openai"}:
         raise ProviderError("NIMBUS_GOOGLE_API_STYLE must be 'mistral' or 'openai'")
+    if _api_style() == "openai" and not os.environ.get("NIMBUS_GOOGLE_MODEL_ID"):
+        raise ProviderError(
+            "NIMBUS_GOOGLE_MODEL_ID is required when using the openai endpoint style")
+    try:
+        timeout = float(os.environ.get("NIMBUS_PROVIDER_TIMEOUT_SECONDS", "300"))
+        retries = int(os.environ.get("NIMBUS_PROVIDER_RETRIES", "2"))
+        backoff = float(os.environ.get("NIMBUS_PROVIDER_BACKOFF_SECONDS", "0.5"))
+    except ValueError as exc:
+        raise ProviderError("Provider timeout, retries, and backoff must be numeric") from exc
+    if timeout <= 0 or not 0 <= retries <= 5 or backoff < 0:
+        raise ProviderError("Invalid provider timeout, retry count, or backoff")
     _load_credentials()
 
 
@@ -189,13 +272,15 @@ async def generate(tier: str, prompt: str, max_tokens: int, stats: dict,
     a local cache object to it.
     """
     model_id = _model_id(tier)
-    stats.update({"provider": "google", "model": model_id,
+    stats.update({"provider": "google", "model": _wire_model_id(model_id),
                   "usage_source": "unreported", "tokens_in": 0,
                   "tokens_out": 0, "tokens_cached": 0})
     retries = max(0, int(os.environ.get("NIMBUS_PROVIDER_RETRIES", "2")))
     backoff = float(os.environ.get("NIMBUS_PROVIDER_BACKOFF_SECONDS", "0.5"))
 
     for attempt in range(retries + 1):
+        stats.update({"usage_source": "unreported", "tokens_in": 0,
+                      "tokens_out": 0, "tokens_cached": 0})
         yielded = False
         try:
             async for text in _stream_once(model_id, prompt, max_tokens, stats):
