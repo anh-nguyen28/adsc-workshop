@@ -8,12 +8,13 @@ the file: an interrupted run leaves config.py patched, and reading that back as
 a "baseline" silently produces a baseline with caching already on. Ask how I
 know.
 """
-import json, pathlib, re, subprocess, sys, urllib.request
+import json, os, pathlib, re, subprocess, sys, urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CFG = ROOT / "01_deploy" / "config.py"
 PY = str(ROOT / ".venv" / "bin" / "python")
-URL = "http://127.0.0.1:8000"
+URL = os.environ.get("NIMBUS_URL", "http://127.0.0.1:8000").rstrip("/")
+ADMIN_TOKEN = os.environ.get("NIMBUS_ADMIN_TOKEN", "")
 ORIGINAL = CFG.read_text()
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
@@ -47,7 +48,8 @@ def patch(overrides):
 
 
 def reload_server():
-    req = urllib.request.Request(f"{URL}/reload", method="POST", data=b"")
+    headers = {"X-Nimbus-Admin-Token": ADMIN_TOKEN} if ADMIN_TOKEN else {}
+    req = urllib.request.Request(f"{URL}/reload", method="POST", data=b"", headers=headers)
     urllib.request.urlopen(req, timeout=180).read()
 
 

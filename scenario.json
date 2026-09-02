@@ -28,6 +28,14 @@
     },
     "replica_usd_per_month": 300
   },
+  "provider_prices": {
+    "google:mistral-small-2503": {
+      "input": 0.10,
+      "output": 0.30,
+      "cached_input": 0.10,
+      "_comment": "USD per 1M tokens; verify current Google pricing before the event. Cloud Run infrastructure is separate."
+    }
+  },
   "bench_defaults": {
     "requests": 16,
     "rate": 4.0,

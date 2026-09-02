@@ -3,12 +3,14 @@
 Uses /reload rather than restarting, so the whole sweep costs minutes not tens
 of minutes. Restores shipping defaults on exit no matter how it ends.
 """
-import json, pathlib, re, subprocess, sys, urllib.request
+import json, os, pathlib, re, subprocess, sys, urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CFG = ROOT / "01_deploy" / "config.py"
 PY = str(ROOT / ".venv" / "bin" / "python")
 ORIGINAL = CFG.read_text()
+URL = os.environ.get("NIMBUS_URL", "http://127.0.0.1:8000").rstrip("/")
+ADMIN_TOKEN = os.environ.get("NIMBUS_ADMIN_TOKEN", "")
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 from defaults import DEFAULTS  # noqa: E402  single source of truth
@@ -41,7 +43,9 @@ def patch(overrides):
 
 
 def reload_server():
-    req = urllib.request.Request("http://127.0.0.1:8000/reload", method="POST", data=b"")
+    req = urllib.request.Request(
+        f"{URL}/reload", method="POST", data=b"",
+        headers={"X-Nimbus-Admin-Token": ADMIN_TOKEN} if ADMIN_TOKEN else {})
     urllib.request.urlopen(req, timeout=120).read()
 
 
@@ -52,7 +56,7 @@ def require_server():
     zeroes that looks like data.
     """
     try:
-        urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5).read()
+        urllib.request.urlopen(f"{URL}/health", timeout=5).read()
     except Exception as exc:  # noqa: BLE001
         raise SystemExit(f"Nimbus is not responding ({exc}). Start `make serve` first.")
 

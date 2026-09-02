@@ -11,7 +11,7 @@ the point the activity makes about quality being the expensive axis.
 
 Usage:  .venv/bin/python facilitators/eval.py            # current server config
 """
-import argparse, json, pathlib, sys, urllib.request
+import argparse, json, os, pathlib, sys, urllib.request
 
 # Two tiers, because they measure different things.
 #
@@ -98,11 +98,17 @@ def ask(url: str, question: str) -> str:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--url", default="http://127.0.0.1:8000")
+    ap.add_argument("--url", default=os.environ.get("NIMBUS_URL", "http://127.0.0.1:8000"))
+    ap.add_argument("--admin-token", default=os.environ.get("NIMBUS_ADMIN_TOKEN", ""),
+                    help="token for protected /metrics; never sent to /ask")
     ap.add_argument("--label", default="")
     args = ap.parse_args()
+    args.url = args.url.rstrip("/")
 
-    cfg = json.loads(urllib.request.urlopen(f"{args.url}/metrics", timeout=10)
+    metrics_request = urllib.request.Request(
+        f"{args.url}/metrics",
+        headers={"X-Nimbus-Admin-Token": args.admin_token} if args.admin_token else {})
+    cfg = json.loads(urllib.request.urlopen(metrics_request, timeout=10)
                      .read().decode())["config"]
 
     def score_set(cases):

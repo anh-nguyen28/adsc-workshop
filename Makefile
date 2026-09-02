@@ -1,7 +1,7 @@
 VENV := .venv
 PY   := $(VENV)/bin/python
 PORT ?= 8000
-URL  ?= http://127.0.0.1:$(PORT)
+URL  ?= $(if $(NIMBUS_URL),$(NIMBUS_URL),http://127.0.0.1:$(PORT))
 
 setup:
 	python3 -m venv $(VENV)
@@ -20,10 +20,12 @@ bench:
 	$(PY) 02_benchmark/run.py --url $(URL) $(ARGS)
 
 reload:
-	@curl -s -X POST $(URL)/reload | $(PY) -m json.tool
+	@curl -sS -X POST $(URL)/reload \
+		-H "X-Nimbus-Admin-Token: $${NIMBUS_ADMIN_TOKEN}" | $(PY) -m json.tool
 
 metrics:
-	@curl -s $(URL)/metrics | $(PY) -m json.tool
+	@curl -sS $(URL)/metrics \
+		-H "X-Nimbus-Admin-Token: $${NIMBUS_ADMIN_TOKEN}" | $(PY) -m json.tool
 
 reset-config:
 	@$(PY) facilitators/defaults.py

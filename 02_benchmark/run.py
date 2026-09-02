@@ -21,6 +21,7 @@ How it works
 import argparse
 import asyncio
 import json
+import os
 import pathlib
 import random
 import time
@@ -78,6 +79,9 @@ async def one_request(client, url, question, results, sem):
             "tokens_in": stats.get("tokens_in", 0),
             "tokens_out": stats.get("tokens_out", 0),
             "tokens_cached": stats.get("tokens_cached", 0),
+            "usage_source": stats.get("usage_source", "unknown"),
+            "provider": stats.get("provider", ""),
+            "model": stats.get("model", ""),
             "cache": stats.get("cache", "miss"),
             "tier": stats.get("tier", "-"),
         })
@@ -90,7 +94,7 @@ async def drive(url, questions, rate, concurrency):
     rng = random.Random(20260831)
     started = time.perf_counter()
     tasks = []
-    async with httpx.AsyncClient(timeout=180.0) as client:
+    async with httpx.AsyncClient(timeout=360.0) as client:
         for q in questions:
             tasks.append(asyncio.create_task(
                 one_request(client, url, q, results, sem)))
@@ -100,7 +104,7 @@ async def drive(url, questions, rate, concurrency):
 
 
 async def warmup(url, n):
-    async with httpx.AsyncClient(timeout=180.0) as client:
+    async with httpx.AsyncClient(timeout=360.0) as client:
         for i in range(n):
             try:
                 async with client.stream("POST", f"{url}/ask",
@@ -115,7 +119,9 @@ async def warmup(url, n):
 def main() -> None:
     d = SCENARIO["bench_defaults"]
     p = argparse.ArgumentParser(description="Benchmark your Nimbus deployment.")
-    p.add_argument("--url", default="http://127.0.0.1:8000")
+    p.add_argument("--url", default=os.environ.get("NIMBUS_URL", "http://127.0.0.1:8000"))
+    p.add_argument("--admin-token", default=os.environ.get("NIMBUS_ADMIN_TOKEN", ""),
+                   help="token for protected /metrics; never written to results")
     p.add_argument("--requests", type=int, default=d["requests"])
     p.add_argument("--rate", type=float, default=d["rate"],
                    help="arrivals per second (Poisson)")
@@ -126,14 +132,28 @@ def main() -> None:
 
     questions = [PROMPTS[i % len(PROMPTS)]["question"] for i in range(args.requests)]
 
+    args.url = args.url.rstrip("/")
+
     # Record what the server was actually running. Reading it from /metrics
     # rather than from config.py means the report describes the deployment you
     # measured, not the file you happen to have open in your editor.
     server_config = {}
+    server_runtime = {}
     try:
-        server_config = httpx.get(f"{args.url}/metrics", timeout=10).json().get("config", {})
-    except Exception:  # noqa: BLE001
-        pass
+        metrics_response = httpx.get(
+            f"{args.url}/metrics", timeout=10,
+            headers={"X-Nimbus-Admin-Token": args.admin_token} if args.admin_token else {})
+        if metrics_response.status_code == 401:
+            print("warning: /metrics requires NIMBUS_ADMIN_TOKEN; continuing without server config",
+                  flush=True)
+        else:
+            metrics_response.raise_for_status()
+            metrics_payload = metrics_response.json()
+            server_config = metrics_payload.get("config", {})
+            server_runtime = metrics_payload.get("runtime", {})
+    except Exception as exc:  # noqa: BLE001
+        print(f"warning: could not read /metrics ({exc}); cost/config data may be incomplete",
+              flush=True)
 
     print(f"warming up ({args.warmup} requests, discarded)...", flush=True)
     asyncio.run(warmup(args.url, args.warmup))
@@ -145,8 +165,10 @@ def main() -> None:
 
     RESULTS.mkdir(exist_ok=True)
     run_no = len(list(RESULTS.glob("run-*.json"))) + 1
+    recorded_args = {k: v for k, v in vars(args).items() if k != "admin_token"}
     payload = {"run": run_no, "label": args.label, "duration_s": duration,
-               "args": vars(args), "server_config": server_config, "results": results}
+               "args": recorded_args, "server_config": server_config,
+               "server_runtime": server_runtime, "results": results}
     (RESULTS / f"run-{run_no}.json").write_text(json.dumps(payload, indent=2))
 
     from report import render          # noqa: PLC0415
