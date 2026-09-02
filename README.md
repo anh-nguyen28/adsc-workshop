@@ -12,7 +12,7 @@ need a browser.
 | Participant using the shared cloud service | Open the URL from the facilitator | A browser |
 | Facilitator deploying the shared service | [`deploy/README.md`](deploy/README.md) | Google Cloud project and permissions |
 | Facilitator benchmarking Cloud Run | [`02_benchmark/README.md`](02_benchmark/README.md) | A prepared checkout and admin token |
-| Participant or facilitator running locally | [`participant-preflight.md`](participant-preflight.md) | Python 3.10+ and about 3 GB disk |
+| Participant or facilitator running locally | [`participant-preflight.md`](participant-preflight.md) | Docker Desktop, 8 GB RAM, and about 8 GB disk |
 
 The detailed local service guide is [`01_deploy/README.md`](01_deploy/README.md).
 Contributor and pull-request checks are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
@@ -44,7 +44,7 @@ participant browser
 Cloud Run or local FastAPI service  (the backend proxy)
         │  retrieval · cache · queue · timing · SSE
         ▼
-Google-managed model API             or local Hugging Face models
+Google-managed model API             or local Ollama + Llama model
 ```
 
 The FastAPI service is already the proxy. It keeps model credentials out of
@@ -52,7 +52,7 @@ the browser, retrieves course notes, controls concurrency, records metrics, and
 streams answers. A second API gateway or backend proxy is not required for a
 10–20 participant workshop.
 
-## Cloud Run quick start
+## Cloud Run quick start (after local verification)
 
 ### For participants
 
@@ -101,7 +101,53 @@ The current Mistral token rates are tracked as an explicit assumption in
 [`scenario.json`](scenario.json) and should be rechecked against the [Google
 pricing page](https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing).
 
-## Local quick start
+## Local-first Docker quick start
+
+Run and benchmark the complete application locally before deploying anything
+to Cloud Run. Docker Compose starts the Ollama model server, pulls the default
+free-to-run Llama 3.1 8B weights into a persistent volume, builds the retrieval
+index, and starts Nimbus. No Google credentials are used.
+
+From `adsc-workshop/`:
+
+```bash
+make docker-up
+curl -fsS http://127.0.0.1:8000/health
+make docker-bench
+```
+
+The first `make docker-up` can take several minutes because it downloads the
+roughly 8B-class model. Subsequent app rebuilds reuse the `ollama-models`
+volume. Stop the stack with:
+
+```bash
+make docker-down
+```
+
+The default uses `llama3.1:8b` for both routing tiers to avoid downloading two
+large models. You can choose separate Ollama-compatible models, including a
+larger 12B–14B-class model when the machine has enough RAM:
+
+```bash
+NIMBUS_OLLAMA_MODEL_SMALL=llama3.1:8b \
+NIMBUS_OLLAMA_MODEL_LARGE=your-12b-or-14b-model \
+make docker-up
+```
+
+The Llama weights are free to run locally under Meta's Llama license. Review
+that license and the selected model's terms before redistribution or hosted
+commercial use. CPU-only Docker works everywhere; supported Linux hosts can
+also use an accelerator through Ollama. On macOS, use Docker for the
+CPU-compatible path or run Ollama natively if you need Apple GPU acceleration.
+
+The benchmark runs inside the Nimbus container and writes its JSON results to
+the repository's `results/` directory:
+
+```bash
+make docker-bench ARGS="--requests 4 --concurrency 1"
+```
+
+## Local Python quick start
 
 Use this path for the original hands-on activity:
 
@@ -127,7 +173,20 @@ Run the benchmark:
 make bench
 ```
 
-Change one setting in `01_deploy/config.py`, reload, and measure again:
+This path uses the original lightweight Hugging Face tiers. Use the Docker
+path above when you want to exercise the preferred local 8B–14B-class Llama
+setup.
+
+Change one setting in `01_deploy/config.py`, reload, and measure again. The
+Docker stack mounts this control file, so no image rebuild is needed for a
+configuration lever:
+
+```bash
+make docker-reload
+make docker-bench ARGS="--label 'trimmed prompt'"
+```
+
+For the Python-local path:
 
 ```bash
 make reload
@@ -183,7 +242,10 @@ facilitators/    Quality evaluation and ladder calibration tools
 data/            Course notes and build-time retrieval index
 deploy/          Cloud Run deployment script and cloud-owner checklist
 Dockerfile       Reproducible Cloud Run image
-Makefile         Setup, serve, benchmark, reload, and metrics commands
+Dockerfile.local Local app image for the Ollama Compose stack
+docker-compose.local.yml
+                  Ollama model server, model pull, local app, and results mount
+Makefile         Setup, Docker, serve, benchmark, reload, and metrics commands
 scenario.json    Workshop SLOs and model pricing inputs
 ```
 

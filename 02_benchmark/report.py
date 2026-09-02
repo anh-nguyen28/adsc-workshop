@@ -24,6 +24,11 @@ def _price_for(row: dict, payload: dict, scenario: dict) -> dict | None:
     provider_prices = scenario.get("provider_prices", {})
     if model and f"{provider}:{model}" in provider_prices:
         return provider_prices[f"{provider}:{model}"]
+    if provider == "ollama":
+        # Ollama is a local open-weight runtime. The benchmark reports direct
+        # model spend as zero; it intentionally does not estimate electricity
+        # or the user's existing hardware.
+        return {"input": 0.0, "output": 0.0, "cached_input": 0.0}
     if provider == "local":
         tier = row.get("tier")
         return scenario.get("prices", {}).get(tier)
@@ -80,6 +85,9 @@ def summarise(payload: dict, scenario: dict) -> dict:
         estimate = os.environ.get("NIMBUS_CLOUD_RUN_MONTHLY_ESTIMATE_USD")
         infra = float(estimate) if estimate is not None else None
         replicas = None
+    elif provider == "ollama":
+        replicas = None
+        infra = 0.0
     else:
         # Capacity is the only lever with a bill in the local exercise.
         replicas = payload.get("server_config", {}).get("REPLICAS", 1) or 1
@@ -93,6 +101,7 @@ def summarise(payload: dict, scenario: dict) -> dict:
     return {
         "run": payload["run"],
         "label": payload.get("label", ""),
+        "provider": provider,
         "ok": len(ok), "shed": len(shed), "failed": len(failed),
         "duration_s": duration,
         "rps": len(ok) / duration if duration else 0.0,
@@ -181,7 +190,9 @@ def render(payload: dict, scenario: dict, results_dir: pathlib.Path) -> str:
     L.append("")
     if s["usage_complete"]:
         L.append(f"cost         ${s['usd_per_1k']:.3f} / 1k requests")
-        if s["replicas"] is not None:
+        if s["provider"] == "ollama":
+            infra_label = "$0 local model hosting (hardware/electricity excluded)"
+        elif s["replicas"] is not None:
             infra_label = (f"${s['usd_infra_per_month']:,.0f} infra "
                            f"({s['replicas']} replica"
                            f"{'s' if s['replicas'] != 1 else ''})")

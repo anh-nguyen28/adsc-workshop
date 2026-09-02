@@ -14,12 +14,13 @@ import os
 
 
 # ─── RUNTIME BACKEND ──────────────────────────────────────────────────────
-# Local mode keeps the original offline workshop path. Cloud Run sets this to
-# "google" and uses 01_deploy/cloud_model.py; the model weights are never served
-# by the Cloud Run container.
+# Local mode keeps the original offline workshop path. The Docker Compose path
+# sets this to "ollama" and uses a locally running Llama model. Cloud Run sets
+# this to "google" and uses 01_deploy/cloud_model.py; the model weights are
+# never served by the Cloud Run container.
 MODEL_BACKEND = os.environ.get("NIMBUS_MODEL_BACKEND", "local")
-if MODEL_BACKEND not in {"local", "google"}:
-    raise ValueError("NIMBUS_MODEL_BACKEND must be 'local' or 'google'")
+if MODEL_BACKEND not in {"local", "ollama", "google"}:
+    raise ValueError("NIMBUS_MODEL_BACKEND must be 'local', 'ollama', or 'google'")
 
 
 # ─── RUNG 1 · CONFIRM THE BOTTLENECK ─────────────────────────────────────

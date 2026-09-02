@@ -5,24 +5,42 @@ setup from taking time away from the hands-on incident.
 
 ## What you need
 
-- A laptop with Python 3.10 or newer, or a prepared GitHub Codespace.
+- Docker Desktop or Docker Engine with Compose v2.
+- At least 8 GB of RAM recommended for the default Llama 3.1 8B model.
+- About 8 GB of free disk space for the app image, embedding model, and Llama
+  weights.
 - Two terminal tabs and a code editor.
-- About 3 GB of free disk space for Python packages and the two small models.
 
-## Local setup
+## Local Docker setup
 
 From the `adsc-workshop` folder, run:
+
+```bash
+make docker-up
+```
+
+The first command builds the app and downloads `llama3.1:8b` once into the
+persistent `ollama-models` volume. It can take several minutes. Verify it with:
+
+```bash
+curl -fsS http://127.0.0.1:8000/health
+make docker-bench ARGS="--requests 4 --concurrency 1"
+```
+
+Nimbus then serves strictly from the local Ollama/model and retrieval caches;
+it will not use Google or another hosted model during the activity.
+
+When you are done, run `make docker-down`. Keep the volume if you want to avoid
+downloading the model again.
+
+## Python-local setup (optional lightweight path)
+
+If Docker is unavailable, the original Python setup remains supported:
 
 ```bash
 make setup
 .venv/bin/python .devcontainer/prefetch.py
 ```
-
-The second command downloads the model weights once. It can take several
-minutes; wait until it prints `all weights cached.`
-
-Nimbus then serves strictly from that local cache; it will not reach out to the
-internet during the activity.
 
 Then verify the service can start:
 

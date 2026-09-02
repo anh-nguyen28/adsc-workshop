@@ -4,7 +4,31 @@ Goal: get Nimbus running, reachable, and answering questions. Five minutes.
 
 ---
 
-## 1. Set up (once)
+## 1. Set up locally with Docker
+
+The complete local deployment uses Docker Compose: Ollama serves a free local
+Llama model, Nimbus provides the FastAPI/RAG proxy, and the benchmark runs in
+the Nimbus container. No cloud credentials are needed.
+
+From the repository root:
+
+```bash
+make docker-up
+curl -fsS http://127.0.0.1:8000/health
+make docker-bench
+```
+
+The first start pulls `llama3.1:8b` into the persistent `ollama-models` volume.
+Set `NIMBUS_OLLAMA_MODEL_SMALL` and/or `NIMBUS_OLLAMA_MODEL_LARGE` before
+`make docker-up` to use another Ollama-compatible 8B–14B-class model.
+
+Stop it with:
+
+```bash
+make docker-down
+```
+
+## 2. Set up with Python (lightweight workshop path)
 
 ```bash
 make setup
@@ -14,7 +38,7 @@ This creates a virtualenv, installs the pinned dependencies from
 `requirements.txt`, and builds the course-note index. If you are in Codespaces
 this has already happened for you.
 
-## 2. Start it
+## 3. Start it
 
 ```bash
 make serve
@@ -31,7 +55,7 @@ The first start takes a few seconds because **both model tiers load before the
 server accepts traffic**. That is deliberate — see "Why it is built this way"
 below.
 
-## 3. Ask it something
+## 4. Ask it something
 
 In a second terminal:
 
@@ -50,7 +74,7 @@ You get a stream of text, and then a final event with the numbers that matter:
            "cache": "miss", "tier": "large"}}
 ```
 
-## 4. Put it on the internet (optional, Codespaces only)
+## 5. Put it on the internet (optional, Codespaces only)
 
 ```bash
 make public
@@ -121,8 +145,9 @@ incident.
 
 ```
 config.py       ★ the levers — this is your control panel
-app.py            the service: request path, timing, streaming
-model.py          the two model tiers (small 135M, large 360M)
+app.py          the service: request path, timing, streaming
+model.py        lightweight Hugging Face local adapter
+ollama_model.py Docker-local Ollama/Llama adapter
 cloud_model.py    Google-managed model adapter used by Cloud Run
 retrieval.py      course-note search
 levers.py         caches, router, the long vs trimmed system prompt
@@ -141,6 +166,10 @@ first. **Part 3 is where you find out what is actually wrong.**
 make metrics          # what config is the running server actually using?
 make reload           # apply your config.py edit and clear answer caches
 make serve PORT=8080  # run on a different port
+
+# Docker-local equivalents
+make docker-metrics
+make docker-reload
 ```
 
 For Cloud Run, export `NIMBUS_URL` and `NIMBUS_ADMIN_TOKEN` before `make

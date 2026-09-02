@@ -1,0 +1,80 @@
+services:
+  # Ollama is the local model server. It automatically uses an available
+  # accelerator on supported Linux hosts; the same service also works CPU-only.
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 5s
+
+  # Pull configured models exactly once per volume. The default is one Llama
+  # 3.1 8B model for both Nimbus tiers; override the two variables when you
+  # want separate tiers and have enough memory for both model files. The
+  # sequential dependency keeps two init containers from pulling the same
+  # model concurrently on a fresh volume.
+  ollama-pull-small:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["ollama"]
+    command: ["pull", "${NIMBUS_OLLAMA_MODEL_SMALL:-llama3.1:8b}"]
+    volumes:
+      - ollama-models:/root/.ollama
+
+  ollama-pull-large:
+    image: ollama/ollama:latest
+    depends_on:
+      ollama-pull-small:
+        condition: service_completed_successfully
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["ollama"]
+    command: ["pull", "${NIMBUS_OLLAMA_MODEL_LARGE:-llama3.1:8b}"]
+    volumes:
+      - ollama-models:/root/.ollama
+
+  nimbus:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    depends_on:
+      ollama-pull-small:
+        condition: service_completed_successfully
+      ollama-pull-large:
+        condition: service_completed_successfully
+    environment:
+      NIMBUS_ALLOW_MODEL_DOWNLOAD: "0"
+      NIMBUS_MODEL_BACKEND: ollama
+      NIMBUS_OLLAMA_BASE_URL: http://ollama:11434
+      NIMBUS_OLLAMA_MODEL_SMALL: ${NIMBUS_OLLAMA_MODEL_SMALL:-llama3.1:8b}
+      NIMBUS_OLLAMA_MODEL_LARGE: ${NIMBUS_OLLAMA_MODEL_LARGE:-llama3.1:8b}
+      # One active generation is a safer CPU default for an 8B model. Raise it
+      # after measuring queue wait on a GPU or a machine with enough RAM.
+      NIMBUS_MAX_CONCURRENT: ${NIMBUS_MAX_CONCURRENT:-1}
+      PORT: "8000"
+    ports:
+      - "${NIMBUS_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        ["CMD", "python", "-c",
+         "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+    volumes:
+      # Keep the workshop control panel editable without rebuilding the image.
+      - ./01_deploy/config.py:/app/01_deploy/config.py:ro
+      - ./results:/app/results
+
+volumes:
+  ollama-models:

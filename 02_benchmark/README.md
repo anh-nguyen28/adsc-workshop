@@ -5,9 +5,21 @@ fix with numbers.
 
 ---
 
-## 1. Measure
+## 1. Measure locally first
 
-With `make serve` running in another terminal:
+For the preferred local Llama path, start the complete Docker stack from the
+repository root and run the benchmark inside the Nimbus container:
+
+```bash
+make docker-up
+make docker-bench
+```
+
+Ollama model output is counted as zero direct hosted-model cost in the report;
+hardware and electricity are intentionally outside this workshop estimate.
+
+The lightweight Python path remains available. With `make serve` running in
+another terminal:
 
 ```bash
 make bench

@@ -22,9 +22,12 @@ Nimbus is designed to make that loop observable. In particular, it reports
 queue wait and compute time separately, because an overloaded queue and a slow
 model require different fixes.
 
-The project has two supported runtime modes:
+The project has three supported runtime modes:
 
-- **Local mode:** FastAPI, local retrieval, and two CPU Hugging Face model tiers.
+- **Docker-local mode:** FastAPI and local retrieval, with Llama generation
+  served by Ollama in a sibling container.
+- **Python-local mode:** FastAPI, local retrieval, and two CPU Hugging Face
+  model tiers.
 - **Cloud mode:** FastAPI and local retrieval running on Cloud Run, with
   generation delegated to a Google-managed model through ADC.
 
@@ -39,7 +42,14 @@ All commands in this document run from the `adsc-workshop/` directory.
 
 ### Prerequisites
 
-For local development:
+For Docker-local development:
+
+- Docker Desktop or Docker Engine with Compose v2;
+- 8 GB RAM recommended for the default Llama 3.1 8B model;
+- approximately 8 GB of free disk space for the app image, embedding model,
+  and Llama weights;
+
+For the lightweight Python-local path:
 
 - Python 3.10 or newer;
 - two terminal tabs for the service and benchmark;
@@ -59,7 +69,27 @@ Never commit API keys, service-account JSON files, admin tokens, populated
 deployment environment files, local model weights, the retrieval index, or
 benchmark output.
 
-### Local setup
+### Docker-local setup (run this before cloud deployment)
+
+From `adsc-workshop/`:
+
+```bash
+make docker-up
+curl -fsS http://127.0.0.1:8000/health
+make docker-bench
+```
+
+The first start downloads the default `llama3.1:8b` model into the named
+`ollama-models` volume. Override `NIMBUS_OLLAMA_MODEL_SMALL` and
+`NIMBUS_OLLAMA_MODEL_LARGE` for separate 8B–14B-class tiers. The benchmark runs
+inside the app container, and its results are mounted back into `results/`.
+
+```bash
+make docker-bench ARGS="--requests 4 --concurrency 1"
+make docker-down
+```
+
+### Python-local setup
 
 Create the virtual environment, install the pinned dependencies, build the
 retrieval index, and prefetch the local model weights:
@@ -102,7 +132,15 @@ The `/ask` response is Server-Sent Events. It emits answer deltas, one final
 
 For the optimization activity, edit only
 [`01_deploy/config.py`](01_deploy/config.py), change one setting, then reload
-and benchmark:
+and benchmark. In Docker-local mode the control file is mounted into the app
+container, so a lever change does not require an image rebuild:
+
+```bash
+make docker-reload
+make docker-bench ARGS="--label 'describe the change'"
+```
+
+For the Python-local path:
 
 ```bash
 make reload
@@ -114,6 +152,14 @@ clears answer caches so the next measurement starts fairly. Restart the service
 if the backend, model-loading behavior, or imported Python code changes.
 
 Useful commands:
+
+```bash
+make docker-metrics           # Docker-local configuration and counters
+make docker-bench             # Docker-local benchmark
+make docker-down              # stop containers, keep model volume
+```
+
+Python-local commands:
 
 ```bash
 make metrics                 # inspect the running configuration and counters
@@ -183,7 +229,8 @@ code or send it with participant requests.
   config.py          workshop levers and runtime environment overrides
   levers.py          prompt construction, caches, and model routing
   retrieval.py       brute-force search over the local embedding index
-  model.py           local SmolLM generation adapter
+  model.py           lightweight Hugging Face local generation adapter
+  ollama_model.py    Docker-local Ollama/Llama generation adapter
   cloud_model.py     Google-managed model adapter
   timing.py          queue-wait and compute stopwatch
   web/index.html     participant browser UI
@@ -214,7 +261,10 @@ deploy/
                      deployment configuration template
 
 Dockerfile           cloud image definition
-Makefile             common setup, serve, benchmark, and admin commands
+Dockerfile.local     Docker-local app image
+docker-compose.local.yml
+                     Ollama server, model pull, app, and result volume
+Makefile             common setup, Docker, serve, benchmark, and admin commands
 scenario.json        locked workshop constraints and pricing assumptions
 ```
 
@@ -313,15 +363,19 @@ Nimbus contains three intentionally different caches:
 |---|---|---|---|
 | Response | SHA-256 of assembled prompt | Retrieval and generation | No model cost |
 | Semantic | Embedding similarity above threshold | Retrieval and generation | No model cost, but quality risk |
-| Prefix | Static prompt prefix and model tier | Local prompt prefill | Generation still runs; input is discounted in the model |
+| Prefix | Static prompt prefix and model tier | Python-local prompt prefill | Generation still runs; input is discounted in the model |
 
 All caches are process-local. `/reload` clears exact and semantic answer caches.
 Prefix seeds are keyed by a prefix hash and are not cleared by
 `reset_caches()`.
 
+In Docker-local Ollama mode, `PREFIX_CACHE` does not copy a Transformers KV
+cache into the model server. Ollama owns its own loaded-model/prompt state, so
+the benchmark reports no application-managed prefix-cached tokens.
+
 ### Model adapters
 
-Both adapters expose the same conceptual contract:
+All three adapters expose the same conceptual contract:
 
 ```text
 warm()
@@ -330,9 +384,11 @@ close()                 # optional
 runtime_info()          # optional
 ```
 
-The local adapter loads both SmolLM tiers once and uses Hugging Face streaming
-generation in worker threads so blocking iterator calls do not stall the
-asyncio event loop.
+The Python-local adapter loads both lightweight Hugging Face tiers once and
+uses streaming generation in worker threads so blocking iterator calls do not
+stall the asyncio event loop. The Docker-local adapter validates that Ollama
+has the configured Llama models pulled, then streams Ollama's native chat API
+and records its prompt/output token counters.
 
 The cloud adapter uses Google ADC, not API keys or checked-in service-account
 files. It supports the configured managed endpoint, parses SSE/NDJSON/JSON
@@ -347,8 +403,8 @@ without distinct cloud model IDs.
 ### Configuration and reload behavior
 
 [`config.py`](01_deploy/config.py) is the single workshop control panel. Its
-source values define the local exercise; `NIMBUS_*` environment variables are
-applied afterward for Cloud Run.
+source values define the Python-local exercise; `NIMBUS_*` environment
+variables are applied afterward for Docker-local and Cloud Run deployments.
 
 The optimization ladder is:
 
@@ -423,7 +479,9 @@ committing or running a participant session.
 
 The [`Dockerfile`](Dockerfile) installs the pinned runtime dependencies, copies
 the source, and builds the retrieval index during image construction. It does
-not package the local generation model weights.
+not package generation model weights. [`Dockerfile.local`](Dockerfile.local)
+uses the same retrieval build for the local Compose app; its Llama weights are
+owned by the separate Ollama container and persist in `ollama-models`.
 
 At runtime the image:
 

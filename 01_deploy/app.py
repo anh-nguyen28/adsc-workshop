@@ -33,6 +33,8 @@ from timing import Timer  # noqa: E402
 
 if config.MODEL_BACKEND == "google":
     import cloud_model as model  # noqa: E402
+elif config.MODEL_BACKEND == "ollama":
+    import ollama_model as model  # noqa: E402
 else:
     import torch  # noqa: E402
     import model  # noqa: E402
@@ -52,8 +54,9 @@ _CONFIG_KEYS = ("MODEL_BACKEND", "RESPONSE_CACHE", "PREFIX_CACHE", "SEMANTIC_CAC
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Validate/load all runtime dependencies BEFORE serving traffic, never inside
-    # a request handler. In Cloud Run this validates ADC; in local mode it loads
-    # the two local model tiers.
+    # a request handler. In Cloud Run this validates ADC; Python-local mode
+    # loads the two local model tiers; Docker-local mode validates Ollama and
+    # the pulled model names.
     model.warm()
     _state["semaphore"] = asyncio.Semaphore(config.MAX_CONCURRENT * config.REPLICAS)
     print(f"Nimbus ready | {retrieval.size()} note chunks | tier={config.MODEL_TIER} "

@@ -2,6 +2,8 @@ VENV := .venv
 PY   := $(VENV)/bin/python
 PORT ?= 8000
 URL  ?= $(if $(NIMBUS_URL),$(NIMBUS_URL),http://127.0.0.1:$(PORT))
+NIMBUS_PORT ?= 8000
+COMPOSE ?= docker compose -f docker-compose.local.yml
 
 setup:
 	python3 -m venv $(VENV)
@@ -12,6 +14,27 @@ setup:
 
 serve:
 	$(VENV)/bin/uvicorn app:app --app-dir 01_deploy --host 0.0.0.0 --port $(PORT)
+
+# Local-first Docker path: Ollama, the Nimbus proxy, retrieval, and the
+# benchmark all run without Google credentials. Model weights persist in the
+# named ollama-models volume across app rebuilds.
+docker-up:
+	$(COMPOSE) up -d --build --wait
+
+docker-down:
+	$(COMPOSE) down
+
+docker-logs:
+	$(COMPOSE) logs -f nimbus
+
+docker-bench:
+	$(COMPOSE) exec -T nimbus python 02_benchmark/run.py --url http://127.0.0.1:8000 $(ARGS)
+
+docker-reload:
+	@curl -fsS -X POST http://127.0.0.1:$(NIMBUS_PORT)/reload
+
+docker-metrics:
+	@curl -fsS http://127.0.0.1:$(NIMBUS_PORT)/metrics
 
 public:
 	gh codespace ports visibility $(PORT):public
@@ -33,4 +56,4 @@ reset-config:
 clean:
 	rm -rf results/*.json
 
-.PHONY: setup serve public bench reload metrics reset-config clean
+.PHONY: setup serve docker-up docker-down docker-logs docker-bench docker-reload docker-metrics public bench reload metrics reset-config clean
