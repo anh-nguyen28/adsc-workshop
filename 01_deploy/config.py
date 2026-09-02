@@ -10,6 +10,18 @@
 Everything here ships OFF or EXPENSIVE on purpose. That is the incident.
 """
 
+import os
+
+
+# ─── RUNTIME BACKEND ──────────────────────────────────────────────────────
+# Local mode keeps the original offline workshop path. Cloud Run sets this to
+# "google" and uses 01_deploy/cloud_model.py; the model weights are never served
+# by the Cloud Run container.
+MODEL_BACKEND = os.environ.get("NIMBUS_MODEL_BACKEND", "local")
+if MODEL_BACKEND not in {"local", "google"}:
+    raise ValueError("NIMBUS_MODEL_BACKEND must be 'local' or 'google'")
+
+
 # ─── RUNG 1 · CONFIRM THE BOTTLENECK ─────────────────────────────────────
 # Nothing to change here. Run `make bench` and read two numbers off the
 # report before you touch anything else:
@@ -108,3 +120,55 @@ SHED_ABOVE_QUEUE = None
 # Set to an integer to reject requests with 429 + Retry-After once the queue
 # is deeper than this. Failing fast and honestly beats timing out slowly —
 # but every shed request is a student who did not get an answer.
+
+
+# ─── RUNTIME OVERRIDES ────────────────────────────────────────────────────
+# The source-level values above remain the workshop's single control panel.
+# Cloud Run cannot edit a checked-out file at runtime, so deployment variables
+# may override the same settings without changing the local activity. This is
+# intentionally applied last and is visible through /metrics.
+def _env_bool(name: str, current: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return current
+    if value.lower() not in {"0", "1", "false", "true", "no", "yes"}:
+        raise ValueError(f"{name} must be true/false or 1/0")
+    return value.lower() in {"1", "true", "yes"}
+
+
+def _env_int(name: str, current: int | None) -> int | None:
+    value = os.environ.get(name)
+    return current if value is None else int(value)
+
+
+RESPONSE_CACHE = _env_bool("NIMBUS_RESPONSE_CACHE", RESPONSE_CACHE)
+PREFIX_CACHE = _env_bool("NIMBUS_PREFIX_CACHE", PREFIX_CACHE)
+SEMANTIC_CACHE = _env_bool("NIMBUS_SEMANTIC_CACHE", SEMANTIC_CACHE)
+if os.environ.get("NIMBUS_SEMANTIC_CACHE_THRESHOLD") is not None:
+    SEMANTIC_CACHE_THRESHOLD = float(os.environ["NIMBUS_SEMANTIC_CACHE_THRESHOLD"])
+MAX_TOKENS = _env_int("NIMBUS_MAX_TOKENS", MAX_TOKENS)
+if os.environ.get("NIMBUS_SYSTEM_PROMPT") is not None:
+    SYSTEM_PROMPT = os.environ["NIMBUS_SYSTEM_PROMPT"].upper()
+RETRIEVE_K = _env_int("NIMBUS_RETRIEVE_K", RETRIEVE_K)
+ROUTE_EASY = _env_bool("NIMBUS_ROUTE_EASY", ROUTE_EASY)
+if os.environ.get("NIMBUS_MODEL_TIER") is not None:
+    MODEL_TIER = os.environ["NIMBUS_MODEL_TIER"].lower()
+MAX_CONCURRENT = _env_int("NIMBUS_MAX_CONCURRENT", MAX_CONCURRENT)
+SHED_ABOVE_QUEUE = _env_int("NIMBUS_SHED_ABOVE_QUEUE", SHED_ABOVE_QUEUE)
+
+if MAX_TOKENS is None or MAX_TOKENS < 1:
+    raise ValueError("MAX_TOKENS must be at least 1")
+if MAX_TOKENS > 1024:
+    raise ValueError("MAX_TOKENS must be at most 1024")
+if RETRIEVE_K is None or RETRIEVE_K < 0:
+    raise ValueError("RETRIEVE_K must be at least 0")
+if MAX_CONCURRENT is None or MAX_CONCURRENT < 1:
+    raise ValueError("MAX_CONCURRENT must be at least 1")
+if SYSTEM_PROMPT not in {"LONG", "TRIMMED"}:
+    raise ValueError("SYSTEM_PROMPT must be LONG or TRIMMED")
+if MODEL_TIER not in {"small", "large"}:
+    raise ValueError("MODEL_TIER must be small or large")
+if not 0 <= SEMANTIC_CACHE_THRESHOLD <= 1:
+    raise ValueError("SEMANTIC_CACHE_THRESHOLD must be between 0 and 1")
+if SHED_ABOVE_QUEUE is not None and SHED_ABOVE_QUEUE < 0:
+    raise ValueError("SHED_ABOVE_QUEUE must be at least 0 or None")
