@@ -62,13 +62,28 @@ This makes port 8000 publicly reachable and prints a URL like
 > If your organisation blocks public port forwarding, skip this. Nothing else
 > in the activity depends on it.
 
+## Cloud Run path
+
+For a shared participant URL, use the Cloud Run deployment in the repository
+root. The FastAPI app in this folder is already the backend proxy; it calls a
+Google-managed model when `NIMBUS_MODEL_BACKEND=google` and uses ADC from the
+Cloud Run runtime service account. See [`deploy/README.md`](../deploy/README.md)
+for the cloud-owner inputs, secret setup, and deployment command.
+
+The cloud container builds the course-note embedding/index artifact once. It
+does not package the local LLM weights, and it does not require a GPU. Admin
+routes (`/metrics` and `/reload`) require `X-Nimbus-Admin-Token` in Cloud Run;
+participant `/` and `/ask` remain public for the workshop.
+
 ---
 
 ## Why it is built this way
 
 **Models load once, at startup, never inside a request handler.** Loading a
 model per request is the most common LLM deployment mistake there is. Here it
-would also make every number you measure meaningless.
+would also make every number you measure meaningless. In cloud mode the LLM is
+managed by Google; Nimbus validates credentials at startup and keeps retrieval
+dependencies local.
 
 **Nimbus retrieves before it generates.** It is a small RAG service, not a bare
 chat wrapper:
@@ -94,20 +109,25 @@ is half of what the benchmark measures.
 
 ---
 
-## The file you edit
+## What you edit
 
-Everything else in this folder is infrastructure you can read but should not
-change. **`config.py` is the only file you edit.**
+For the local workshop, `config.py` is the control panel: change one setting,
+reload, and benchmark. The service code is provided so every team measures the
+same request path. For Cloud Run, use `deploy/cloudrun.env` for deployment and
+runtime settings; do not edit the image or add credentials to the repository.
 
-It ships with every lever off or expensive. That is the incident.
+The local defaults ship with every lever off or expensive. That is the
+incident.
 
 ```
 config.py       ★ the levers — this is your control panel
 app.py            the service: request path, timing, streaming
 model.py          the two model tiers (small 135M, large 360M)
+cloud_model.py    Google-managed model adapter used by Cloud Run
 retrieval.py      course-note search
 levers.py         caches, router, the long vs trimmed system prompt
 timing.py         the queue-wait / compute stopwatch
+web/index.html    participant browser page
 ```
 
 Open `config.py` now and read it. Do not change anything yet — go and measure
@@ -122,6 +142,10 @@ make metrics          # what config is the running server actually using?
 make reload           # apply your config.py edit and clear answer caches
 make serve PORT=8080  # run on a different port
 ```
+
+For Cloud Run, export `NIMBUS_URL` and `NIMBUS_ADMIN_TOKEN` before `make
+metrics` or `make reload`. Participants only need the service URL and use the
+browser page at `/`.
 
 After every change to `config.py`, run `make reload`, then run the benchmark
 again. Reloading keeps the models warm and clears response caches, so each

@@ -51,6 +51,23 @@ They are the whole diagnosis:
 Write your answer down before you change anything. Teams that skip this step buy
 the wrong fix.
 
+### Benchmarking a Cloud Run service
+
+Participants do not need to clone the repository: they can use the participant
+page at the Cloud Run URL. A facilitator can benchmark that same URL from a
+prepared checkout:
+
+```bash
+export NIMBUS_URL='https://...run.app'
+export NIMBUS_ADMIN_TOKEN='the-value-from-secret-manager'
+make bench URL="$NIMBUS_URL"
+```
+
+The token is used only to read protected `/metrics`; it is not sent to student
+`/ask` requests and is not written to `results/run-N.json`. Use `make reload`
+only when deliberately changing the deployed configuration, because it clears
+the service's in-memory caches.
+
 ---
 
 ## 2. Climb the ladder — in order
@@ -72,7 +89,7 @@ flip all three at once you will not know which one earned the improvement.
 | **2** | **Make repeated work free** | `RESPONSE_CACHE`, `PREFIX_CACHE`, `SEMANTIC_CACHE` |
 | **3** | **Do less per request** | `MAX_TOKENS`, `SYSTEM_PROMPT`, `RETRIEVE_K` |
 | **4** | **Send easy work to the cheap path** | `ROUTE_EASY` |
-| **5** | **Buy capacity** | `MAX_CONCURRENT` (free), `REPLICAS` (**$300/mo each**) |
+| **5** | **Buy capacity** | `MAX_CONCURRENT` (local), `REPLICAS` (local simulation); Cloud Run uses max instances |
 | **6** | **Fail honestly when overloaded** | `SHED_ABOVE_QUEUE` |
 
 **You may not use rung 5 until rungs 1–4 are filled in on your decision sheet.**
@@ -148,7 +165,7 @@ experience.
 | **end-to-end latency** | last chunk minus send time |
 | **inter-token latency** | the gaps between chunks |
 | **queue wait / compute** | the server reports its own split in the final event |
-| **tokens in / out** | the final event |
+| **tokens in / out** | the final event; cloud providers may mark usage as unreported |
 | **cache hit, model tier** | the final event |
 
 **5 · Percentiles, not averages.** p50/p90/p95/p99. An average hides the tail,
@@ -161,8 +178,11 @@ and the tail is what users actually feel and what pages you at 2am.
 > result within 15% of the line as **MARGINAL** and tells you to run it again.
 > Use `--requests 32` when you want to trust a close call.
 
-**6 · Cost comes from measured tokens**, priced with the frozen rates in
-`scenario.json`, projected over the scenario's monthly request volume.
+**6 · Cost comes from measured tokens**, priced with the rates in
+`scenario.json`, projected over the scenario's monthly request volume. For
+Cloud Run, model tokens and Cloud Run infrastructure are separate. If a
+streaming provider does not return usage, the report shows `UNKNOWN` rather
+than pricing zero tokens.
 
 **7 · A verdict, not just numbers.** The report says PASS or FAIL against the
 stated SLO and budget. A benchmark that only prints numbers is a measurement

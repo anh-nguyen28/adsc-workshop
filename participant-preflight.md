@@ -34,6 +34,13 @@ When you see `Nimbus ready`, stop it with `Ctrl-C`. You are ready. During the
 workshop you will start it again, benchmark it, and edit only
 `01_deploy/config.py`.
 
+## Cloud Run participant path
+
+If the facilitator deploys the cloud version, participants need only the shared
+Cloud Run URL and a browser. Open the URL, ask questions in the Nimbus page,
+and do not copy an admin token into the browser. Facilitators keep that token
+for `/metrics`, `/reload`, and remote benchmarking.
+
 ## Codespaces setup
 
 Open the repository in a Codespace at least once before the session. Wait for
