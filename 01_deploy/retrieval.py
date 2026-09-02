@@ -13,9 +13,9 @@ from embed import embed_one
 
 INDEX = pathlib.Path(__file__).resolve().parents[1] / "data" / "index.npz"
 
-_data = np.load(INDEX, allow_pickle=True)
-_vectors: np.ndarray = _data["vectors"]
-_texts: list[str] = list(_data["texts"])
+with np.load(INDEX, allow_pickle=False) as _data:
+    _vectors: np.ndarray = _data["vectors"]
+    _texts: list[str] = list(_data["texts"])
 
 
 def search(question: str, k: int) -> list[str]:

@@ -20,9 +20,12 @@ single place to enforce request limits.
 3. A user-managed runtime service account. Grant it:
    - `roles/aiplatform.user` on the project;
    - `roles/secretmanager.secretAccessor` on the `nimbus-admin-token` secret.
-4. A Secret Manager secret containing a random admin token. It protects
+4. Mistral model access enabled in Model Garden, in the same region used by
+   Cloud Run. The default `mistral-small-2503` is currently listed for
+   `us-central1` and `europe-west4`.
+5. A Secret Manager secret containing a random admin token. It protects
    `/metrics` and `/reload`; it is not used by participants.
-5. A deployer identity with Cloud Run deploy, Artifact Registry write/build,
+6. A deployer identity with Cloud Run deploy, Artifact Registry write/build,
    service-account-use, and the required Cloud Build permissions.
 
 No service-account JSON key, API key, or admin token should be added to this
@@ -51,6 +54,11 @@ capacity claim. Increase `NIMBUS_MAX_INSTANCES` only after measuring queue wait
 and checking the budget. Set `NIMBUS_MIN_INSTANCES=0` outside the live session
 to reduce idle cost.
 
+The service is intentionally public so participants can use a browser without
+Google accounts. Keep this deployment limited to the workshop, retain the
+budget alert, and put Cloud Armor or an identity-aware access layer in front of
+it before using the same pattern for an untrusted or long-lived application.
+
 ## Verify
 
 ```bash
@@ -68,7 +76,16 @@ marks the cost verdict as unknown instead of treating zero tokens as free.
 ## Model choice
 
 The adapter defaults to Google’s managed `mistral-small-2503` endpoint in
-`us-central1`, and the model ID is configurable. Confirm availability and
-pricing with the cloud owner immediately before the event. Do not hard-code a
-retiring model as the only fallback; changing `NIMBUS_GOOGLE_MODEL_ID` should
-not require a source change or credential change.
+`us-central1`, and the model ID is configurable. The current Google pricing
+page lists Mistral Small 3.1 at $0.10 per 1M input tokens and $0.30 per 1M
+output tokens; `scenario.json` contains those rates as an auditable workshop
+assumption. Verify availability and pricing with the cloud owner immediately
+before the event. Do not hard-code a retiring model as the only fallback;
+changing `NIMBUS_GOOGLE_MODEL_ID` should not require a source or credential
+change.
+
+The default `mistral` API style calls the publisher `streamRawPredict` endpoint
+with the Mistral model ID. The optional `openai` style is for a compatible
+OpenAI endpoint and requires an explicit `NIMBUS_GOOGLE_MODEL_ID` (for example,
+the provider-qualified model ID documented by Google); it is not the default
+path for managed Mistral.

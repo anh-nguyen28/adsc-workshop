@@ -16,10 +16,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 RUN NIMBUS_ALLOW_MODEL_DOWNLOAD=1 python data/build_index.py
 
-# The deployment script supplies NIMBUS_MODEL_BACKEND=google and the Google
-# model settings. Keeping local as the application default preserves the
-# original offline workshop path when this image is run without cloud config.
+# This image is the cloud artifact. The local Hugging Face generation models are
+# intentionally not included, so a container started without Google settings
+# should fail with a clear credentials error instead of trying the local path.
+RUN addgroup --system nimbus \
+    && adduser --system --ingroup nimbus nimbus \
+    && chown -R nimbus:nimbus /app /opt/huggingface
+
+USER nimbus
+
 ENV NIMBUS_ALLOW_MODEL_DOWNLOAD=0 \
+    NIMBUS_MODEL_BACKEND=google \
     PORT=8080
 
 EXPOSE 8080

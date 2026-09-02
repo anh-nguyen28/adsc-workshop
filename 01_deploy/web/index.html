@@ -60,6 +60,8 @@
         const decoder = new TextDecoder();
         let buffer = '';
         let stats = null;
+        let serviceError = null;
+        if (!response.body) throw new Error('The service returned no response stream');
         while (true) {
           const {value, done} = await reader.read();
           buffer += decoder.decode(value || new Uint8Array(), {stream: !done});
@@ -71,9 +73,15 @@
             const payload = JSON.parse(line.slice(6));
             if (payload.delta) answer.textContent += payload.delta;
             if (payload.stats) stats = payload.stats;
+            if (payload.error) {
+              serviceError = typeof payload.error === 'string'
+                ? payload.error : payload.error.message;
+            }
           }
           if (done) break;
         }
+        if (serviceError) throw new Error(serviceError);
+        if (!stats) throw new Error('The service ended before returning statistics');
         status.textContent = stats
           ? `Finished in ${stats.compute_ms.toFixed(0)} ms · ${stats.tokens_out} output tokens`
           : 'Finished';

@@ -41,7 +41,7 @@ else:
     # and does not import PyTorch for LLM inference.
     torch.set_num_threads(1)
 
-_state: dict = {"semaphore": None, "waiting": 0, "served": 0, "shed": 0}
+_state: dict = {"semaphore": None, "waiting": 0, "served": 0, "shed": 0, "failed": 0}
 
 _CONFIG_KEYS = ("MODEL_BACKEND", "RESPONSE_CACHE", "PREFIX_CACHE", "SEMANTIC_CACHE",
                 "SEMANTIC_CACHE_THRESHOLD", "MAX_TOKENS",
@@ -80,7 +80,8 @@ async def participant_ui() -> FileResponse:
 @app.get("/health")
 async def health() -> dict:
     return {"ok": True, "served": _state["served"],
-            "shed": _state["shed"], "waiting": _state["waiting"]}
+            "shed": _state["shed"], "failed": _state["failed"],
+            "waiting": _state["waiting"]}
 
 
 def _admin_allowed(token: str | None) -> bool:
@@ -98,6 +99,7 @@ async def metrics(x_nimbus_admin_token: str | None = Header(default=None)) -> di
         return JSONResponse({"error": "admin authentication required"}, status_code=401)
     return {
         "served": _state["served"], "shed": _state["shed"],
+        "failed": _state["failed"],
         "waiting": _state["waiting"],
         "config": {k: getattr(config, k) for k in _CONFIG_KEYS},
         "runtime": (model.runtime_info() if hasattr(model, "runtime_info") else
@@ -141,7 +143,7 @@ async def reload_config(x_nimbus_admin_token: str | None = Header(default=None))
 
     levers.reset_caches()
     _state["semaphore"] = asyncio.Semaphore(config.MAX_CONCURRENT * config.REPLICAS)
-    _state["served"] = _state["shed"] = 0
+    _state["served"] = _state["shed"] = _state["failed"] = 0
     return {"reloaded": True,
             "config": {k: getattr(config, k) for k in _CONFIG_KEYS}}
 
@@ -163,6 +165,8 @@ async def ask(body: Ask):
 
     # ── Rung 5 · admission control ───────────────────────────────────────
     semaphore = _state["semaphore"]
+    if semaphore is None:
+        return JSONResponse({"error": "service is still starting"}, status_code=503)
     _state["waiting"] += 1
     try:
         await semaphore.acquire()
@@ -227,6 +231,19 @@ async def ask(body: Ask):
                 "tier": tier,
             }})
             yield "data: [DONE]\n\n"
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            _state["failed"] += 1
+            print(f"Nimbus request failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+            # The HTTP status is already 200 once a stream starts. Emit a
+            # machine-readable event so browsers and benchmarks do not mistake
+            # a truncated stream for a successful answer.
+            yield _sse({"error": {
+                "code": "request_failed",
+                "message": "Nimbus could not complete this request. Please try again.",
+            }})
+            yield "data: [DONE]\n\n"
         finally:
             # Capture the semaphore this request acquired. /reload may replace
             # the global semaphore while a streamed request is still running.
@@ -235,5 +252,7 @@ async def ask(body: Ask):
     return StreamingResponse(
         stream(),
         media_type="text/event-stream",
-        headers={"X-Queue-Wait-Ms": f"{timer.queue_wait_ms:.1f}"},
+        headers={"Cache-Control": "no-cache",
+                 "X-Accel-Buffering": "no",
+                 "X-Queue-Wait-Ms": f"{timer.queue_wait_ms:.1f}"},
     )

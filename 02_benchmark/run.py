@@ -41,6 +41,8 @@ async def one_request(client, url, question, results, sem):
         ttft = None
         chunk_times = []
         stats = {}
+        request_error = None
+        saw_done = False
         try:
             async with client.stream("POST", f"{url}/ask",
                                      json={"question": question}) as resp:
@@ -54,6 +56,7 @@ async def one_request(client, url, question, results, sem):
                         continue
                     payload = line[6:]
                     if payload == "[DONE]":
+                        saw_done = True
                         break
                     event = json.loads(payload)
                     if "delta" in event:
@@ -63,6 +66,18 @@ async def one_request(client, url, question, results, sem):
                         chunk_times.append(now)
                     elif "stats" in event:
                         stats = event["stats"]
+                    elif "error" in event:
+                        error = event["error"]
+                        request_error = (error if isinstance(error, str)
+                                         else error.get("message", "request failed"))
+            if request_error:
+                results.append({"ok": False, "shed": False,
+                                "error": request_error})
+                return
+            if not saw_done or not stats:
+                results.append({"ok": False, "shed": False,
+                                "error": "incomplete response from service"})
+                return
         except Exception as exc:  # noqa: BLE001
             results.append({"ok": False, "shed": False, "error": repr(exc)})
             return
@@ -129,6 +144,15 @@ def main() -> None:
     p.add_argument("--warmup", type=int, default=d["warmup"])
     p.add_argument("--label", default="", help="note to yourself, e.g. 'cache on'")
     args = p.parse_args()
+
+    if args.requests < 1:
+        p.error("--requests must be at least 1")
+    if args.rate <= 0:
+        p.error("--rate must be greater than 0")
+    if args.concurrency < 1:
+        p.error("--concurrency must be at least 1")
+    if args.warmup < 0:
+        p.error("--warmup cannot be negative")
 
     questions = [PROMPTS[i % len(PROMPTS)]["question"] for i in range(args.requests)]
 

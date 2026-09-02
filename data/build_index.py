@@ -42,7 +42,9 @@ def main() -> None:
     print(f"{len(texts)} chunks from {len(list(NOTES_DIR.glob('*.md')))} files")
 
     vectors = embed_texts(texts)
-    np.savez_compressed(OUT, vectors=vectors, texts=np.array(texts, dtype=object))
+    # Keep texts as a normal Unicode array so serving can load the artifact
+    # with allow_pickle=False. The index contains strings, not Python objects.
+    np.savez_compressed(OUT, vectors=vectors, texts=np.array(texts))
     print(f"wrote {OUT}  vectors={vectors.shape}")
 
 

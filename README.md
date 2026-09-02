@@ -15,6 +15,7 @@ need a browser.
 | Participant or facilitator running locally | [`participant-preflight.md`](participant-preflight.md) | Python 3.10+ and about 3 GB disk |
 
 The detailed local service guide is [`01_deploy/README.md`](01_deploy/README.md).
+Contributor and pull-request checks are in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## What the workshop teaches
 
@@ -96,6 +97,9 @@ service-account JSON file belongs in this repository. The adapter defaults to
 Google-managed Mistral Small 3.1 (`mistral-small-2503`), a 24B-class model, and
 keeps the model ID configurable. Confirm availability and pricing before the
 event in the [Google Mistral model documentation](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/partner-models/mistral/mistral-small-3-1).
+The current Mistral token rates are tracked as an explicit assumption in
+[`scenario.json`](scenario.json) and should be rechecked against the [Google
+pricing page](https://cloud.google.com/gemini-enterprise-agent-platform/generative-ai/pricing).
 
 ## Local quick start
 
