@@ -1,0 +1,9 @@
+.git
+.venv
+__pycache__
+*.pyc
+results
+facilitators/eval_results.json
+data/index.npz
+deploy/*.env
+.devcontainer
