@@ -90,9 +90,9 @@ def count_tokens(tier: str, text: str) -> int:
     return len(tokenizer(text)["input_ids"])
 
 
-def _run_generate(model, kwargs) -> None:
+def _run_generate(model, kwargs, result: dict) -> None:
     with torch.no_grad():
-        model.generate(**kwargs)
+        result["output_ids"] = model.generate(**kwargs)
 
 
 async def generate(tier: str, prompt: str, max_tokens: int, stats: dict,
@@ -131,7 +131,8 @@ async def generate(tier: str, prompt: str, max_tokens: int, stats: dict,
     if past is not None:
         kwargs["past_key_values"] = past
 
-    thread = threading.Thread(target=_run_generate, args=(model, kwargs), daemon=True)
+    result = {}
+    thread = threading.Thread(target=_run_generate, args=(model, kwargs, result), daemon=True)
     thread.start()
 
     loop = asyncio.get_running_loop()
@@ -144,5 +145,15 @@ async def generate(tier: str, prompt: str, max_tokens: int, stats: dict,
         if chunk is None:
             break
         if chunk:
-            stats["tokens_out"] += 1
             yield chunk
+
+    # TextIteratorStreamer signals completion just before generate() returns.
+    # Join the worker so its captured output is available before the caller
+    # emits the final accounting event.
+    await loop.run_in_executor(None, thread.join)
+    output_ids = result.get("output_ids")
+    if hasattr(output_ids, "sequences"):
+        output_ids = output_ids.sequences
+    if output_ids is not None:
+        stats["tokens_out"] = max(
+            0, int(output_ids.shape[-1]) - int(inputs["input_ids"].shape[-1]))
