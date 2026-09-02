@@ -13,53 +13,68 @@ opposite fixes.
 import asyncio
 import importlib
 import json
+import os
 import pathlib
+import secrets
 import sys
 from contextlib import asynccontextmanager
 
-import torch
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel
+from fastapi import FastAPI, Header
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 import config          # noqa: E402
 import levers          # noqa: E402
-import model           # noqa: E402
 import retrieval       # noqa: E402
 from timing import Timer  # noqa: E402
 
-# One core per in-flight request. This is what makes MAX_CONCURRENT a real
-# lever: the box has a fixed number of cores, so admitting more work than that
-# does not create capacity -- it just relocates the waiting.
-torch.set_num_threads(1)
+if config.MODEL_BACKEND == "google":
+    import cloud_model as model  # noqa: E402
+else:
+    import torch  # noqa: E402
+    import model  # noqa: E402
+
+    # One core per in-flight request in local mode. Cloud mode is network-bound
+    # and does not import PyTorch for LLM inference.
+    torch.set_num_threads(1)
 
 _state: dict = {"semaphore": None, "waiting": 0, "served": 0, "shed": 0}
 
-_CONFIG_KEYS = ("RESPONSE_CACHE", "PREFIX_CACHE", "SEMANTIC_CACHE", "MAX_TOKENS",
+_CONFIG_KEYS = ("MODEL_BACKEND", "RESPONSE_CACHE", "PREFIX_CACHE", "SEMANTIC_CACHE",
+                "SEMANTIC_CACHE_THRESHOLD", "MAX_TOKENS",
                 "SYSTEM_PROMPT", "RETRIEVE_K", "ROUTE_EASY", "MODEL_TIER",
                 "MAX_CONCURRENT", "REPLICAS", "SHED_ABOVE_QUEUE")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Load every model tier BEFORE serving traffic, never inside a handler.
+    # Validate/load all runtime dependencies BEFORE serving traffic, never inside
+    # a request handler. In Cloud Run this validates ADC; in local mode it loads
+    # the two local model tiers.
     model.warm()
     _state["semaphore"] = asyncio.Semaphore(config.MAX_CONCURRENT * config.REPLICAS)
     print(f"Nimbus ready | {retrieval.size()} note chunks | tier={config.MODEL_TIER} "
           f"concurrency={config.MAX_CONCURRENT}x{config.REPLICAS} "
           f"max_tokens={config.MAX_TOKENS}")
     yield
+    if hasattr(model, "close"):
+        await model.close()
 
 
 app = FastAPI(title="Nimbus", version="1.0", lifespan=lifespan)
 
 
 class Ask(BaseModel):
-    question: str
-    max_tokens: int | None = None
+    question: str = Field(min_length=1, max_length=4000)
+    max_tokens: int | None = Field(default=None, ge=1, le=1024)
+
+
+@app.get("/", include_in_schema=False)
+async def participant_ui() -> FileResponse:
+    return FileResponse(pathlib.Path(__file__).resolve().parent / "web" / "index.html")
 
 
 @app.get("/health")
@@ -68,12 +83,25 @@ async def health() -> dict:
             "shed": _state["shed"], "waiting": _state["waiting"]}
 
 
+def _admin_allowed(token: str | None) -> bool:
+    expected = os.environ.get("NIMBUS_ADMIN_TOKEN")
+    # Preserve the original local workflow. Cloud mode must be configured with
+    # a secret, otherwise administrative endpoints are unavailable.
+    if not expected:
+        return config.MODEL_BACKEND != "google"
+    return token is not None and secrets.compare_digest(token, expected)
+
+
 @app.get("/metrics")
-async def metrics() -> dict:
+async def metrics(x_nimbus_admin_token: str | None = Header(default=None)) -> dict:
+    if not _admin_allowed(x_nimbus_admin_token):
+        return JSONResponse({"error": "admin authentication required"}, status_code=401)
     return {
         "served": _state["served"], "shed": _state["shed"],
         "waiting": _state["waiting"],
         "config": {k: getattr(config, k) for k in _CONFIG_KEYS},
+        "runtime": (model.runtime_info() if hasattr(model, "runtime_info") else
+                    {"provider": "local"}),
         "cache": levers.cache_stats(),
     }
 
@@ -83,11 +111,12 @@ def _sse(obj: dict) -> str:
 
 
 @app.post("/reload")
-async def reload_config() -> dict:
+async def reload_config(x_nimbus_admin_token: str | None = Header(default=None)) -> dict:
     """Re-read config.py without restarting.
 
-    Loading both model tiers takes ~13s. Paying that on every lever change is a
-    minute of dead time across the ladder, which is a minute not spent thinking.
+    In local mode, loading both model tiers takes ~13s. Cloud mode validates
+    credentials at startup and keeps the managed model warm outside this
+    process, so reload remains a configuration/cache operation.
     importlib.reload updates the existing module object in place, so levers.py --
     which holds a reference to it and reads config.X at call time -- sees the new
     values without being reloaded itself.
@@ -95,6 +124,8 @@ async def reload_config() -> dict:
     Caches are cleared deliberately: a lever change should be measured against a
     cold cache, not against answers accumulated under the previous settings.
     """
+    if not _admin_allowed(x_nimbus_admin_token):
+        return JSONResponse({"error": "admin authentication required"}, status_code=401)
     try:
         importlib.reload(config)
     except Exception as exc:  # noqa: BLE001
@@ -131,18 +162,19 @@ async def ask(body: Ask):
         )
 
     # ── Rung 5 · admission control ───────────────────────────────────────
+    semaphore = _state["semaphore"]
     _state["waiting"] += 1
     try:
-        await _state["semaphore"].acquire()
+        await semaphore.acquire()
     finally:
         _state["waiting"] -= 1
     timer.admitted()
 
-    max_tokens = body.max_tokens or config.MAX_TOKENS
+    max_tokens = body.max_tokens if body.max_tokens is not None else config.MAX_TOKENS
     question = body.question
 
     async def stream():
-        stats = {"tokens_in": 0, "tokens_out": 0}
+        stats = {"tokens_in": 0, "tokens_out": 0, "usage_source": "local"}
         cache_state, tier = "miss", "-"
         try:
             # ── Rung 2 · caches, cheapest first ──────────────────────────
@@ -188,12 +220,17 @@ async def ask(body: Ask):
                 "tokens_in": stats["tokens_in"],
                 "tokens_out": stats["tokens_out"],
                 "tokens_cached": stats.get("tokens_cached", 0),
+                "usage_source": stats.get("usage_source", "unknown"),
+                "provider": stats.get("provider", "local"),
+                "model": stats.get("model", ""),
                 "cache": cache_state,
                 "tier": tier,
             }})
             yield "data: [DONE]\n\n"
         finally:
-            _state["semaphore"].release()
+            # Capture the semaphore this request acquired. /reload may replace
+            # the global semaphore while a streamed request is still running.
+            semaphore.release()
 
     return StreamingResponse(
         stream(),
