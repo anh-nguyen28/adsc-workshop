@@ -36,7 +36,7 @@ workshop and experimentation, but it is not a complete production platform:
 state is in memory, observability is lightweight, and the public deployment
 requires additional abuse protection for any long-lived or untrusted use.
 
-## Setup
+## Local setup
 
 All commands in this document run from the `adsc-workshop/` directory.
 
@@ -69,7 +69,7 @@ Never commit API keys, service-account JSON files, admin tokens, populated
 deployment environment files, local model weights, the retrieval index, or
 benchmark output.
 
-### Docker-local setup (run this before cloud deployment)
+### Docker-local setup (recommended; run this before cloud deployment)
 
 From `adsc-workshop/`:
 
@@ -79,15 +79,74 @@ curl -fsS http://127.0.0.1:8000/health
 make docker-bench
 ```
 
-The first start downloads the default `llama3.1:8b` model into the named
-`ollama-models` volume. Override `NIMBUS_OLLAMA_MODEL_SMALL` and
-`NIMBUS_OLLAMA_MODEL_LARGE` for separate 8B–14B-class tiers. The benchmark runs
-inside the app container, and its results are mounted back into `results/`.
+The first start builds the Nimbus image and downloads the default
+`llama3.1:8b` model into the named `ollama-models` volume. The download can
+take several minutes; later starts reuse the volume. The default uses one
+model for both tiers intentionally, so onboarding does not download the same
+large weights twice. Configure separate tiers only when you want to compare
+models and have enough disk and memory for both:
+
+```bash
+make docker-down
+NIMBUS_OLLAMA_MODEL_SMALL=llama3.2:3b \
+NIMBUS_OLLAMA_MODEL_LARGE=llama3.1:8b \
+make docker-up
+```
+
+Other Ollama-compatible models can be tested by changing those two variables,
+for example `qwen2.5:7b`, `qwen2.5:14b`, or `gemma3:12b`. Confirm the selected
+model's license before redistribution or hosted commercial use.
+
+Verify the running stack and the models available to Ollama:
+
+```bash
+docker compose -f docker-compose.local.yml ps -a
+docker compose -f docker-compose.local.yml exec ollama ollama list
+make docker-metrics
+```
+
+In Docker Desktop, use the **Containers** view to inspect `nimbus` and
+`ollama`, the **Images** view to find `adsc-workshop-nimbus`, and the
+**Volumes** view to find the Compose volume ending in `ollama-models`. The
+volume contains the downloaded model weights and should be kept between
+rebuilds.
+
+Try the participant API directly after `/health` succeeds:
+
+```bash
+curl -N -X POST http://127.0.0.1:8000/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"What is overfitting?"}'
+```
+
+The `/ask` response is Server-Sent Events. The benchmark runs inside the
+Nimbus container, and its JSON results are mounted back into `results/`:
 
 ```bash
 make docker-bench ARGS="--requests 4 --concurrency 1"
+```
+
+For the optimization activity, edit only
+[`01_deploy/config.py`](01_deploy/config.py), then reload and benchmark:
+
+```bash
+make docker-reload
+make docker-bench ARGS="--label 'describe the change'"
+```
+
+No Google credentials are required for Docker-local mode. To inspect a startup
+or model error, run `make docker-logs`. A host port conflict can be solved with
+`NIMBUS_PORT=8001 make docker-up`; use port `8001` for host `curl` and metrics
+commands in that session.
+
+Stop the containers when finished. This keeps the model volume:
+
+```bash
 make docker-down
 ```
+
+Do not add `-v` unless you intentionally want to delete the downloaded model
+weights and start the model setup again.
 
 ### Python-local setup
 
@@ -359,11 +418,11 @@ up to the first changing part of the prompt.
 
 Nimbus contains three intentionally different caches:
 
-| Cache | Key or match | What it skips | Cost behavior |
-|---|---|---|---|
-| Response | SHA-256 of assembled prompt | Retrieval and generation | No model cost |
-| Semantic | Embedding similarity above threshold | Retrieval and generation | No model cost, but quality risk |
-| Prefix | Static prompt prefix and model tier | Python-local prompt prefill | Generation still runs; input is discounted in the model |
+| Cache    | Key or match                         | What it skips               | Cost behavior                                           |
+| -------- | ------------------------------------ | --------------------------- | ------------------------------------------------------- |
+| Response | SHA-256 of assembled prompt          | Retrieval and generation    | No model cost                                           |
+| Semantic | Embedding similarity above threshold | Retrieval and generation    | No model cost, but quality risk                         |
+| Prefix   | Static prompt prefix and model tier  | Python-local prompt prefill | Generation still runs; input is discounted in the model |
 
 All caches are process-local. `/reload` clears exact and semantic answer caches.
 Prefix seeds are keyed by a prefix hash and are not cleared by
