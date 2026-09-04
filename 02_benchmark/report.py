@@ -1,12 +1,34 @@
 """Turn raw per-request timings into the thing the room actually reads.
 
-The important design decision here is the VERDICT. A benchmark that only prints
-numbers is a measurement tool; one that says PASS or FAIL against a stated SLO
-and a stated budget is a game with a win condition, and people play it.
+Two design decisions carry this file.
+
+The VERDICT. A benchmark that only prints numbers is a measurement tool; one
+that says PASS or FAIL against a stated SLO and a stated budget is a game with
+a win condition, and people play it.
+
+The LEDGER. Latency is additive, so the report shows the addends and they sum.
+Reporting one undifferentiated "compute" number makes an overloaded queue, a
+slow retrieval dependency and a slow model look identical from the outside --
+and those have opposite fixes. This file names the dominant contributor and
+stops there: it must never name the lever that fixes it, because that is the
+participant's job and the whole point of the exercise.
 """
 import json
 import os
 import pathlib
+
+# The components of one request's wall clock, in the order they occur.
+# Rows sum back to end-to-end latency; a component that never sums is a missing
+# instrument, not rounding.
+LEDGER = (("client_network", "client + network"),
+          ("queue",          "app queue wait"),
+          ("cache",          "cache lookup"),
+          ("retrieve",       "retrieve"),
+          ("assemble",       "assemble"),
+          ("generate",       "generate"),
+          ("other",          "other (app)"))
+
+LEDGER_LABELS = dict(LEDGER)
 
 
 def pct(values: list[float], q: float) -> float:
@@ -15,6 +37,70 @@ def pct(values: list[float], q: float) -> float:
     ordered = sorted(values)
     idx = min(int(round(q / 100 * (len(ordered) - 1))), len(ordered) - 1)
     return ordered[idx]
+
+
+def _rank_row(rows: list[dict], q: float) -> dict | None:
+    """The single request sitting at the q-th percentile of end-to-end latency."""
+    if not rows:
+        return None
+    ordered = sorted(rows, key=lambda r: r.get("latency_s", 0.0))
+    idx = min(int(round(q / 100 * (len(ordered) - 1))), len(ordered) - 1)
+    return ordered[idx]
+
+
+def _ledger_for(row: dict) -> dict[str, float]:
+    """Split ONE request's wall clock into components that sum back to it.
+
+    Decomposing a single request rather than combining per-stage percentiles is
+    deliberate: percentiles of the parts do not add up to the percentile of the
+    whole, so a column of per-stage p95s cannot be read as a budget. This one
+    can. The distributional view is reported alongside it.
+    """
+    stages = row.get("stages_ms") or {}
+    queue = float(row.get("queue_wait_ms", 0.0) or 0.0)
+    compute = float(row.get("compute_ms", 0.0) or 0.0)
+    measured = sum(float(v or 0.0) for v in stages.values())
+    total_ms = float(row.get("latency_s", 0.0) or 0.0) * 1000
+
+    out = {key: float(stages.get(key, 0.0) or 0.0) for key, _ in LEDGER}
+    out["queue"] = queue
+    # Admitted time no stage timer claimed: request parsing, SSE framing, and
+    # the trace events themselves.
+    out["other"] = max(0.0, compute - measured)
+    # Time outside the server's own accounting: connection setup, transit and
+    # client-side parsing. On Cloud Run this also contains the platform's own
+    # request queue and any cold start; separating those needs Cloud Monitoring.
+    out["client_network"] = max(0.0, total_ms - queue - compute)
+    return out
+
+
+def _bar(value: float, scale: float, width: int = 24) -> str:
+    if scale <= 0 or value <= 0:
+        return "\u258f"
+    filled = int(round(value / scale * width))
+    return "\u2588" * filled if filled else "\u258f"
+
+
+def _residual(total_ms: float, latency_ms: float) -> str:
+    """How far the ledger misses the wall clock. Should be ~0; if not, say so."""
+    if latency_ms <= 0:
+        return "n/a"
+    return f"{(total_ms - latency_ms) / latency_ms * 100:+.1f}%"
+
+
+def _baseline(scenario: dict, key: str):
+    """A calibrated 'normal' value, or None if this hardware was never measured."""
+    return (scenario.get("baselines", {}).get("default", {}) or {}).get(key)
+
+
+def _versus(value: float, base, unit: str = "", tol: float = 0.15) -> str:
+    """Render a measurement against its calibrated baseline, honestly."""
+    if base in (None, 0):
+        return "not calibrated"
+    delta = (value - base) / base
+    if abs(delta) <= tol:
+        return f"baseline {base:,.0f}{unit} \u00b7 normal"
+    return f"baseline {base:,.0f}{unit} \u00b7 {delta*100:+.0f}%"
 
 
 def _price_for(row: dict, payload: dict, scenario: dict) -> dict | None:
@@ -82,8 +168,15 @@ def summarise(payload: dict, scenario: dict) -> dict:
         # flat "replica" price would be misleading. Let the operator provide a
         # budget estimate when they know the service shape; otherwise report it
         # as separate/unknown rather than silently calling token cost total cost.
+        # Prefer the auditable figure in scenario.json; the environment variable
+        # stays as a per-run override. Without either, the cost verdict reports
+        # UNKNOWN rather than quietly treating unmeasured infrastructure as free.
         estimate = os.environ.get("NIMBUS_CLOUD_RUN_MONTHLY_ESTIMATE_USD")
-        infra = float(estimate) if estimate is not None else None
+        if estimate is None:
+            scenario_estimate = prices.get("cloudrun_usd_per_month")
+            infra = float(scenario_estimate) if scenario_estimate is not None else None
+        else:
+            infra = float(estimate)
         replicas = None
     elif provider == "ollama":
         replicas = None
@@ -93,6 +186,37 @@ def summarise(payload: dict, scenario: dict) -> dict:
         replicas = payload.get("server_config", {}).get("REPLICAS", 1) or 1
         infra = replicas * prices.get("replica_usd_per_month", 0)
     hits = sum(1 for r in ok if r.get("cache", "miss") != "miss")
+
+    # The ledger: one representative slow request, decomposed so it sums.
+    p95_row = _rank_row(ok, 95)
+    ledger = _ledger_for(p95_row) if p95_row else {k: 0.0 for k, _ in LEDGER}
+    ledger_latency_ms = (float(p95_row.get("latency_s", 0.0) or 0.0) * 1000
+                         if p95_row else 0.0)
+
+    # The distributional view: each stage's own p95 across every request. This
+    # does NOT sum, on purpose -- when the two columns disagree, different
+    # requests are slow for different reasons, and that is a finding.
+    stage_names = {name for r in ok for name in (r.get("stages_ms") or {})}
+    stage_p95 = {name: pct([float((r.get("stages_ms") or {}).get(name, 0.0) or 0.0)
+                            for r in ok], 95)
+                 for name in stage_names}
+    stage_p95["queue"] = pct([r.get("queue_wait_ms", 0.0) or 0.0 for r in ok], 95)
+
+    # Token averages must exclude cache hits. A hit makes no model call and
+    # reports zero tokens, so averaging it in reports "input tokens 150" for a
+    # service whose prompts are all 242 -- the metric drops because requests
+    # stopped happening, not because they got smaller. That would hide a prompt
+    # regression behind a healthy cache hit rate, which is the exact shape of
+    # failure this panel exists to make visible.
+    # `or ok` handles an all-cache run; the max() handles a run with no
+    # successful requests at all, which must never raise -- the report has to
+    # survive a completely broken deployment in order to say it was broken.
+    generated = [r for r in ok if r.get("cache", "miss") == "miss"] or ok
+    n_generated = max(len(generated), 1)
+
+    slo = scenario.get("constraints", {}).get("slo_p95_latency_s")
+    retry_statuses = sorted({r.get("provider_status") for r in ok
+                             if r.get("provider_status")})
 
     monthly_token_cost = token_cost / n * monthly_requests if usage_complete else None
     monthly_total = (monthly_token_cost + infra
@@ -114,6 +238,16 @@ def summarise(payload: dict, scenario: dict) -> dict:
         "queue_p95": pct([r["queue_wait_ms"] for r in ok], 95) / 1000,
         "compute_p95": pct([r["compute_ms"] for r in ok], 95) / 1000,
         "cache_hit_rate": hits / n,
+        "ledger": ledger,
+        "ledger_latency_ms": ledger_latency_ms,
+        "stage_p95": stage_p95,
+        "upstream_retries": sum(int(r.get("upstream_retries", 0) or 0) for r in ok),
+        "retry_statuses": retry_statuses,
+        "tokens_in_mean": sum(r.get("tokens_in", 0) for r in generated) / n_generated,
+        "tokens_out_mean": sum(r.get("tokens_out", 0) for r in generated) / n_generated,
+        "generated_requests": len(generated),
+        "over_slo": (sum(1 for r in ok if r.get("latency_s", 0.0) > slo)
+                     if slo else 0),
         "prefix_cached_tokens": cached_tokens,
         "input_tokens": sum(r["tokens_in"] for r in ok),
         "usage_complete": usage_complete,
@@ -151,7 +285,12 @@ def render(payload: dict, scenario: dict, results_dir: pathlib.Path) -> str:
     prev = None
     prev_path = results_dir / f"run-{payload['run'] - 1}.json"
     if prev_path.exists():
-        prev = summarise(json.loads(prev_path.read_text()), scenario)
+        candidate = summarise(json.loads(prev_path.read_text()), scenario)
+        # A run with no successful requests has percentiles of 0.0 and a cost of
+        # nothing, so quoting it as "the previous result" presents a completely
+        # broken deployment as the number to beat. Same trap the verdict guard
+        # below exists for -- it just also has to apply to the comparison.
+        prev = candidate if candidate["ok"] > 0 else None
 
     def mark(ok: bool, marginal: bool = False) -> str:
         if marginal:
@@ -178,15 +317,57 @@ def render(payload: dict, scenario: dict, results_dir: pathlib.Path) -> str:
         L.append(f"             note: with {s['ok']} requests, \"p95\" is the "
                  f"{rank}{'nd' if rank == 2 else 'st' if rank == 1 else 'th'}-slowest")
         L.append(f"             request, not a true percentile. Repeat runs vary ~12%.")
+    if s["over_slo"]:
+        L.append(f"             {s['over_slo']} of {s['ok']} request(s) exceeded "
+                 f"the {slo:.1f}s target")
     L.append("")
-    L.append("             ── where the time went ──")
-    L.append(f"queue wait   p95   {s['queue_p95']:6.2f} s   <- waiting in line")
-    L.append(f"compute      p95   {s['compute_p95']:6.2f} s   <- actually working")
-    L.append(f"cache        response hit rate {s['cache_hit_rate']*100:.0f}%")
+
+    # ── where the time went: the additive ledger ─────────────────────────
+    # Left column decomposes the p95 request and SUMS to it, so it reads as a
+    # budget. Right column is each stage's own p95 across all requests, which
+    # is what a dashboard shows and deliberately does not sum.
+    ledger = s["ledger"]
+    peak = max(list(ledger.values()) or [0.0])
+    W = 17
+    L.append("             ── where the time went ─────────────────────────────")
+    L.append(f"  {'':<{W}}{'p95 req':>10}  {'p95 each':>8}")
+    for key, label in LEDGER:
+        value = ledger.get(key, 0.0)
+        each = s["stage_p95"].get(key)
+        each_txt = f"{each / 1000:7.2f}s" if each is not None else f"{'-':>8}"
+        L.append(f"  {label:<{W}}{value / 1000:8.2f} s  {each_txt}  "
+                 f"{_bar(value, peak)}")
+    total = sum(ledger.values())
+    L.append(f"  {'':<{W}}{'--------':>10}")
+    L.append(f"  {'sum of rows':<{W}}{total / 1000:8.2f} s   end-to-end "
+             f"{s['ledger_latency_ms'] / 1000:.2f} s · residual "
+             f"{_residual(total, s['ledger_latency_ms'])}")
+    L.append("")
+
+    # ── how the model behaved ────────────────────────────────────────────
+    # Deliberately no per-token RATE here. Under load every rate inflates with
+    # contention, so an overloaded queue and a genuinely slow model produce the
+    # same reading -- the one confusion this whole panel exists to prevent.
+    # Output token COUNT is load-independent and separates them cleanly; it
+    # lives in "work per request" below.
+    L.append("             ── how the model behaved ───────────────────────────")
+    statuses = ", ".join(str(x) for x in s["retry_statuses"]) or "none"
+    L.append(f"  {'provider retries':<{W}}{s['upstream_retries']:8d}           "
+             f"upstream status: {statuses}")
+    L.append(f"  {'provider':<{W}}{s['provider']:>8}")
+    L.append("")
+
+    # ── work per request ─────────────────────────────────────────────────
+    L.append("             ── work per request ────────────────────────────────")
+    L.append(f"  {'input tokens':<{W}}{s['tokens_in_mean']:8,.0f} avg      "
+             f"{_versus(s['tokens_in_mean'], _baseline(scenario, 'tokens_in'))}")
+    L.append(f"  {'output tokens':<{W}}{s['tokens_out_mean']:8,.0f} avg      "
+             f"{_versus(s['tokens_out_mean'], _baseline(scenario, 'tokens_out'))}")
+    L.append(f"  {'cache hit rate':<{W}}{s['cache_hit_rate']*100:7.0f}%")
     if s["input_tokens"]:
         share = s["prefix_cached_tokens"] / s["input_tokens"] * 100
-        L.append(f"             prefix-cached input {share:.0f}% "
-                 f"({s['prefix_cached_tokens']:,} of {s['input_tokens']:,} tokens)")
+        L.append(f"  {'prefix-cached':<{W}}{share:7.0f}%          "
+                 f"{s['prefix_cached_tokens']:,} of {s['input_tokens']:,} input tokens")
     L.append("")
     if s["usage_complete"]:
         L.append(f"cost         ${s['usd_per_1k']:.3f} / 1k requests")
@@ -225,10 +406,52 @@ def render(payload: dict, scenario: dict, results_dir: pathlib.Path) -> str:
     L.append(verdict)
 
     if not healthy:
-        L.append("hint     every request failed. Is `make serve` running, and on this port?")
-    elif not lat_ok and s["queue_p95"] > s["compute_p95"]:
-        L.append("hint     queue wait exceeds compute. The model is not your problem.")
-    elif not lat_ok:
-        L.append("hint     compute dominates. Each request is doing too much work.")
+        L.append("hint     every request failed. Is the service running, and on this port?")
+        L.append("")
+        return "\n".join(L)
+
+    # READ THIS FIRST attributes the latency and stops. It names the dominant
+    # contributor and what is sitting at baseline -- ruling things out is half
+    # of a diagnosis -- but it must never name the lever that fixes it. The
+    # moment this block says "enable caching" or "the model is not your
+    # problem", the exercise is over and the room has learned nothing.
+    L.extend(_read_this_first(s, scenario))
     L.append("")
     return "\n".join(L)
+
+
+def _read_this_first(s: dict, scenario: dict) -> list[str]:
+    """Attribution, never remediation."""
+    ledger = s["ledger"]
+    total = sum(ledger.values())
+    if total <= 0:
+        return []
+
+    ranked = sorted(ledger.items(), key=lambda kv: kv[1], reverse=True)
+    out = ["READ THIS FIRST"]
+    top_key, top_value = ranked[0]
+    out.append(f"  Largest contributor to the p95 request: "
+               f"{LEDGER_LABELS[top_key].upper()} ({top_value / total * 100:.0f}%).")
+
+    runners = [f"{LEDGER_LABELS[k]} {v / total * 100:.0f}%"
+               for k, v in ranked[1:3] if v / total >= 0.01]
+    if runners:
+        out.append("  Then: " + ", ".join(runners) + ".")
+    quiet = [LEDGER_LABELS[k] for k, v in ranked if v / total < 0.01]
+    if quiet:
+        out.append(f"  Below 1% of the budget: {', '.join(quiet)}.")
+
+    # Signals sitting at their calibrated normal. Saying what is NOT anomalous
+    # is what lets a team rule out a suspect instead of guessing at one.
+    steady = []
+    for value, key in ((s["tokens_in_mean"], "tokens_in"),
+                       (s["tokens_out_mean"], "tokens_out")):
+        base = _baseline(scenario, key)
+        if base and abs(value - base) / base <= 0.15:
+            steady.append(key.replace("_", " "))
+    if steady:
+        out.append(f"  At baseline: {', '.join(steady)}.")
+    if s["upstream_retries"]:
+        out.append(f"  The provider was retried {s['upstream_retries']} time(s); "
+                   f"that time is inside generate.")
+    return out

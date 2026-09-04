@@ -1,0 +1,244 @@
+{
+  "run": 0,
+  "label": "queue",
+  "duration_s": 10.942392582997854,
+  "args": {},
+  "server_config": {},
+  "server_runtime": {
+    "provider": "google"
+  },
+  "results": [
+    {
+      "ok": true,
+      "shed": false,
+      "latency_s": 0.6075033749984868,
+      "ttft_s": 0.44047362499986775,
+      "itl_ms": 54.41229166657043,
+      "queue_wait_ms": 0.7,
+      "compute_ms": 542.8,
+      "stages_ms": {
+        "cache": 0.0,
+        "retrieve": 16.4,
+        "assemble": 0.0,
+        "generate": 523.8
+      },
+      "upstream_retries": 0,
+      "provider_status": null,
+      "tokens_in": 261,
+      "tokens_out": 32,
+      "tokens_cached": 0,
+      "usage_source": "provider",
+      "provider": "google",
+      "model": "gemini-2.5-flash",
+      "cache": "miss",
+      "tier": "large"
+    },
+    {
+      "ok": false,
+      "shed": true
+    },
+    {
+      "ok": false,
+      "shed": true
+    },
+    {
+      "ok": true,
+      "shed": false,
+      "latency_s": 1.485470791998523,
+      "ttft_s": 1.2504405829968164,
+      "itl_ms": 75.81365300090208,
+      "queue_wait_ms": 479.0,
+      "compute_ms": 933.6,
+      "stages_ms": {
+        "cache": 0.0,
+        "retrieve": 18.4,
+        "assemble": 0.0,
+        "generate": 913.9
+      },
+      "upstream_retries": 0,
+      "provider_status": null,
+      "tokens_in": 204,
+      "tokens_out": 32,
+      "tokens_cached": 0,
+      "usage_source": "provider",
+      "provider": "google",
+      "model": "gemini-2.5-flash",
+      "cache": "miss",
+      "tier": "large"
+    },
+    {
+      "ok": false,
+      "shed": true
+    },
+    {
+      "ok": false,
+      "shed": true
+    },
+    {
+      "ok": false,
+      "shed": true
+    },
+    {
+      "ok": false,
+      "shed": true
+    },
+    {
+      "ok": false,
+      "shed": true
+    },
+    {
+      "ok": false,
+      "shed": true
+    },
+    {
+      "ok": true,
+      "shed": false,
+      "latency_s": 8.093664750002063,
+      "ttft_s": 7.931799124999088,
+      "itl_ms": 48.33991666722189,
+      "queue_wait_ms": 1361.2,
+      "compute_ms": 6658.4,
+      "stages_ms": {
+        "cache": 0.0,
+        "retrieve": 19.5,
+        "assemble": 0.0,
+        "generate": 6637.4
+      },
+      "upstream_retries": 0,
+      "provider_status": null,
+      "tokens_in": 213,
+      "tokens_out": 32,
+      "tokens_cached": 0,
+      "usage_source": "provider",
+      "provider": "google",
+      "model": "gemini-2.5-flash",
+      "cache": "miss",
+      "tier": "large"
+    },
+    {
+      "ok": true,
+      "shed": false,
+      "latency_s": 8.538066416997026,
+      "ttft_s": 8.343636082998273,
+      "itl_ms": 62.181972333443504,
+      "queue_wait_ms": 7842.6,
+      "compute_ms": 626.4,
+      "stages_ms": {
+        "cache": 0.0,
+        "retrieve": 24.5,
+        "assemble": 0.0,
+        "generate": 600.4
+      },
+      "upstream_retries": 0,
+      "provider_status": null,
+      "tokens_in": 203,
+      "tokens_out": 32,
+      "tokens_cached": 0,
+      "usage_source": "provider",
+      "provider": "google",
+      "model": "gemini-2.5-flash",
+      "cache": "miss",
+      "tier": "large"
+    },
+    {
+      "ok": true,
+      "shed": false,
+      "latency_s": 9.134137332999671,
+      "ttft_s": 8.908705207999446,
+      "itl_ms": 73.63805566637893,
+      "queue_wait_ms": 8316.9,
+      "compute_ms": 749.1,
+      "stages_ms": {
+        "cache": 0.0,
+        "retrieve": 21.1,
+        "assemble": 0.0,
+        "generate": 726.3
+      },
+      "upstream_retries": 0,
+      "provider_status": null,
+      "tokens_in": 206,
+      "tokens_out": 32,
+      "tokens_cached": 0,
+      "usage_source": "provider",
+      "provider": "google",
+      "model": "gemini-2.5-flash",
+      "cache": "miss",
+      "tier": "large"
+    },
+    {
+      "ok": true,
+      "shed": false,
+      "latency_s": 9.63381733300048,
+      "ttft_s": 9.43461620800008,
+      "itl_ms": 64.59215300007297,
+      "queue_wait_ms": 9042.5,
+      "compute_ms": 520.4,
+      "stages_ms": {
+        "cache": 0.0,
+        "retrieve": 20.5,
+        "assemble": 0.0,
+        "generate": 498.7
+      },
+      "upstream_retries": 0,
+      "provider_status": null,
+      "tokens_in": 232,
+      "tokens_out": 32,
+      "tokens_cached": 0,
+      "usage_source": "provider",
+      "provider": "google",
+      "model": "gemini-2.5-flash",
+      "cache": "miss",
+      "tier": "large"
+    },
+    {
+      "ok": true,
+      "shed": false,
+      "latency_s": 9.771255916999507,
+      "ttft_s": 9.734916458997759,
+      "itl_ms": 13.562416499553365,
+      "queue_wait_ms": 9357.1,
+      "compute_ms": 342.9,
+      "stages_ms": {
+        "cache": 0.0,
+        "retrieve": 17.9,
+        "assemble": 0.1,
+        "generate": 320.8
+      },
+      "upstream_retries": 0,
+      "provider_status": null,
+      "tokens_in": 213,
+      "tokens_out": 10,
+      "tokens_cached": 0,
+      "usage_source": "provider",
+      "provider": "google",
+      "model": "gemini-2.5-flash",
+      "cache": "miss",
+      "tier": "large"
+    },
+    {
+      "ok": true,
+      "shed": false,
+      "latency_s": 9.368283292002161,
+      "ttft_s": 9.199313875000371,
+      "itl_ms": 53.94405566767091,
+      "queue_wait_ms": 8844.9,
+      "compute_ms": 484.1,
+      "stages_ms": {
+        "cache": 0.0,
+        "retrieve": 18.1,
+        "assemble": 0.0,
+        "generate": 464.5
+      },
+      "upstream_retries": 0,
+      "provider_status": null,
+      "tokens_in": 261,
+      "tokens_out": 32,
+      "tokens_cached": 0,
+      "usage_source": "provider",
+      "provider": "google",
+      "model": "gemini-2.5-flash",
+      "cache": "miss",
+      "tier": "large"
+    }
+  ]
+}

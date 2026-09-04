@@ -17,6 +17,8 @@ from typing import Any, AsyncIterator
 
 import httpx
 
+import incident
+
 
 class ProviderError(RuntimeError):
     """The local Ollama server could not complete a model request."""
@@ -191,6 +193,9 @@ async def generate(tier: str, prompt: str, max_tokens: int, stats: dict,
     stats.update({"provider": "ollama", "model": model_id,
                   "usage_source": "unreported", "tokens_in": 0,
                   "tokens_out": 0, "tokens_cached": 0})
+    # Same contract as the cloud adapter: retries are reported, not hidden.
+    stats["upstream_retries"] = 0
+    stats["provider_status"] = None
     try:
         retries = int(os.environ.get("NIMBUS_OLLAMA_RETRIES", "1"))
     except ValueError as exc:
@@ -203,11 +208,18 @@ async def generate(tier: str, prompt: str, max_tokens: int, stats: dict,
                       "tokens_out": 0})
         yielded = False
         try:
+            simulated = incident.provider_fault(prompt, attempt)
+            if simulated is not None:
+                raise RetryableProviderError(
+                    f"Ollama returned HTTP {simulated}")
             async for text in _stream_once(model_id, prompt, max_tokens, stats):
                 yielded = True
                 yield text
             return
-        except RetryableProviderError:
+        except RetryableProviderError as exc:
+            stats["provider_status"] = getattr(exc, "status_code", None)
             if yielded or attempt >= retries:
+                stats["upstream_retries"] = attempt
                 raise
+            stats["upstream_retries"] = attempt + 1
             await asyncio.sleep(0.25 * (2 ** attempt))

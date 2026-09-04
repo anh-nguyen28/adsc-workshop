@@ -161,7 +161,7 @@ model.py        lightweight Hugging Face local adapter
 ollama_model.py Docker-local Ollama/Llama adapter
 cloud_model.py    Google-managed model adapter used by Cloud Run
 retrieval.py      course-note search
-levers.py         caches, router, the long vs trimmed system prompt
+levers.py         caches, router, and the long, trimmed, or verbose prompt
 timing.py         the queue-wait / compute stopwatch
 web/index.html    participant browser page
 ```

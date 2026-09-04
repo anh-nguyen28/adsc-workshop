@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+"""Nimbus — the incident you are on call for.
+
+    nimbus init <url> <token>   point this terminal at your team's service
+    nimbus brief                what was reported, and the targets to hit
+    nimbus baseline             measure, change nothing
+    nimbus diagnose             read the last run back
+    nimbus hypothesis           record what you think is wrong
+    nimbus set K=V              change one setting on the running service
+    nimbus bench                measure again
+    nimbus status               what the service is configured with
+
+The loop is: measure, attribute, commit to a diagnosis, change ONE thing,
+measure again. The report names the largest contributor to your latency. It
+will not tell you what to do about it -- that part is the job.
+"""
+import argparse
+import asyncio
+import json
+import os
+import pathlib
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "02_benchmark"))
+
+CONFIG = pathlib.Path(os.path.expanduser("~/.nimbus.json"))
+SCENARIO = json.loads((ROOT / "scenario.json").read_text())
+STATE = ROOT / ".nimbus-runs"
+
+
+def _load():
+    env_url = os.environ.get("NIMBUS_URL")
+    env_token = os.environ.get("NIMBUS_TOKEN") or os.environ.get("NIMBUS_ADMIN_TOKEN")
+    if env_url:
+        return {"url": env_url.rstrip("/"), "token": env_token or ""}
+    if CONFIG.exists():
+        return json.loads(CONFIG.read_text())
+    sys.exit("Run `nimbus init <url> <token>` first "
+             "(your facilitator has both).")
+
+
+def _http(path, method="GET", body=None, token=None):
+    import urllib.error
+    import urllib.request
+    cfg = _load()
+    data = json.dumps(body).encode() if body is not None else None
+    headers = {"Content-Type": "application/json"}
+    if token or cfg.get("token"):
+        headers["X-Nimbus-Admin-Token"] = token or cfg["token"]
+    req = urllib.request.Request(f"{cfg['url']}{path}", method=method,
+                                 data=data, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return r.status, json.loads(r.read() or b"{}")
+    except urllib.error.HTTPError as exc:
+        raw = exc.read() or b"{}"
+        try:
+            return exc.code, json.loads(raw)
+        except json.JSONDecodeError:
+            return exc.code, {"error": raw.decode(errors="replace")[:300]}
+
+
+# ── commands ──────────────────────────────────────────────────────────────
+
+def cmd_init(args):
+    CONFIG.write_text(json.dumps({"url": args.url.rstrip("/"),
+                                  "token": args.token}, indent=2))
+    print(f"Pointed at {args.url}")
+    status, body = _http("/health")
+    if status == 200 and body.get("ok"):
+        print("Service is up.  Try:  nimbus brief")
+    else:
+        print(f"WARNING: /health returned {status}. Check the URL with your facilitator.")
+
+
+def cmd_brief(args):
+    _, b = _http("/brief")
+    t = b.get("targets", {})
+    print()
+    print(f"  INCIDENT — {b.get('title', '').upper()}")
+    print()
+    print(f"  WHAT WAS REPORTED")
+    print(f"    {b.get('reported', '')}")
+    if b.get("user_impact"):
+        print()
+        print(f"  WHO IT AFFECTS")
+        print(f"    {b['user_impact']}")
+    print()
+    print(f"  TARGETS")
+    print(f"    p95 latency    at most {t.get('p95_latency_s')} s")
+    print(f"    monthly cost   at most ${t.get('usd_per_month'):,}")
+    print(f"    answer quality at least {t.get('quality_pct')}%")
+    print()
+    print(f"  YOUR TASK")
+    print(f"    {b.get('task', '')}")
+    print()
+    print("  Start with:  nimbus baseline")
+    print()
+
+
+def _ensure_warm(url, bench, rounds=5, batch=4):
+    """Send discarded traffic until the service stops getting faster.
+
+    A container that has just started, or has been idle, is slow enough to move
+    the largest row of the report onto the wrong component -- so the first
+    measurement of the day would point at the model no matter what was actually
+    wrong. The benchmark's own two-request warmup is sized for a process that is
+    already running, not a container that has just come up.
+    """
+    import time
+    questions = [bench.PROMPTS[i % len(bench.PROMPTS)]["question"]
+                 for i in range(batch)]
+    previous = None
+    for _ in range(rounds):
+        started = time.perf_counter()
+        asyncio.run(bench.drive(url, questions, rate=8.0, concurrency=2))
+        elapsed = time.perf_counter() - started
+        if previous is not None and elapsed > previous * 0.85:
+            return
+        previous = elapsed
+
+
+def _run_benchmark(label, requests, rate, concurrency):
+    import run as bench
+    from report import render
+    cfg = _load()
+    url = cfg["url"]
+    questions = [bench.PROMPTS[i % len(bench.PROMPTS)]["question"]
+                 for i in range(requests)]
+    print("warming the service (these requests are discarded)...", flush=True)
+    _ensure_warm(url, bench)
+    print(f"sending {requests} requests at {rate}/s "
+          f"(up to {concurrency} at once)...", flush=True)
+    asyncio.run(bench.warmup(url, SCENARIO["bench_defaults"]["warmup"]))
+    results, duration = asyncio.run(
+        bench.drive(url, questions, rate, concurrency))
+
+    STATE.mkdir(exist_ok=True)
+    run_no = len(list(STATE.glob("run-*.json"))) + 1
+    payload = {"run": run_no, "label": label, "duration_s": duration, "args": {},
+               "server_config": {}, "server_runtime": {"provider": "google"},
+               "results": results}
+    (STATE / f"run-{run_no}.json").write_text(json.dumps(payload))
+    print(render(payload, SCENARIO, STATE))
+    return payload
+
+
+def cmd_baseline(args):
+    if STATE.exists() and list(STATE.glob("run-*.json")):
+        print("You already have a baseline. Use `nimbus bench` to measure again.\n")
+    d = _traffic()
+    print("\n  BASELINE — change nothing yet.\n"
+          "  Read where the time went before you touch a setting.\n")
+    _run_benchmark("baseline", args.requests or d["requests"],
+                   args.rate or d["rate"], args.concurrency or d["concurrency"])
+
+
+def _traffic():
+    """The load this service is under, as the service reports it.
+
+    Each incident was calibrated at a specific arrival rate and concurrency, so
+    a client that picks its own measures a different system. Falls back to the
+    scenario defaults only if the service does not say.
+    """
+    default = SCENARIO["bench_defaults"]
+    try:
+        _, brief = _http("/brief")
+        traffic = brief.get("traffic") or {}
+        return {**default, **traffic}
+    except Exception:  # noqa: BLE001
+        return default
+
+
+def cmd_bench(args):
+    d = _traffic()
+    _run_benchmark(args.label, args.requests or d["requests"],
+                   args.rate or d["rate"], args.concurrency or d["concurrency"])
+
+
+def cmd_diagnose(args):
+    runs = sorted(STATE.glob("run-*.json"),
+                  key=lambda p: int(p.stem.split("-")[1])) if STATE.exists() else []
+    if not runs:
+        sys.exit("No runs yet. Start with `nimbus baseline`.")
+    from report import render, summarise
+    payload = json.loads(runs[-1].read_text())
+    s = summarise(payload, SCENARIO)
+    print(render(payload, SCENARIO, STATE))
+    ledger = s["ledger"]
+    total = sum(ledger.values()) or 1.0
+    ranked = sorted(ledger.items(), key=lambda kv: kv[1], reverse=True)
+    print("  QUESTIONS TO ANSWER BEFORE YOU CHANGE ANYTHING")
+    print(f"    1. {ranked[0][0].replace('_', ' ')} is "
+          f"{ranked[0][1]/total*100:.0f}% of the p95 request. Why would that be?")
+    print("    2. Is the model implicated? Which number settles it?")
+    print("    3. What is the ONE change you would make, and what should move?")
+    print()
+    print("  Then:  nimbus hypothesis")
+    print()
+
+
+def cmd_hypothesis(args):
+    body = {"dominant_slice": args.slice, "model_implicated": args.model,
+            "proof_metric": args.proof}
+    if args.lever:
+        body["predicted_lever"] = args.lever
+    if args.expect:
+        body["predicted_direction"] = args.expect
+    status, resp = _http("/hypothesis", "POST", body)
+    if status != 200:
+        sys.exit(f"Could not record it ({status}): {resp.get('error', resp)}")
+    print("Recorded. You can change a setting now:  nimbus set KEY=VALUE")
+
+
+def cmd_set(args):
+    changes = {}
+    for pair in args.pairs:
+        if "=" not in pair:
+            sys.exit(f"Use KEY=VALUE, not {pair!r}")
+        key, _, value = pair.partition("=")
+        changes[key.strip().upper()] = value.strip()
+    status, resp = _http("/levers", "POST", changes)
+    if status == 409:
+        print("\n  Not yet — record a diagnosis first.\n")
+        print(f"  {resp.get('detail', '')}\n")
+        print("  nimbus hypothesis --slice '<where the time went>' \\")
+        print("                    --proof '<the number that says so>'\n")
+        sys.exit(1)
+    if status != 200:
+        detail = resp.get("detail") or resp.get("error")
+        sys.exit(f"Rejected: {detail}")
+    print("Applied:")
+    for key, value in resp["changed"].items():
+        print(f"  {key}: {resp['previous'][key]} -> {value}")
+    print("\nMeasure again:  nimbus bench --label 'what you changed'")
+
+
+def cmd_status(args):
+    status, body = _http("/metrics")
+    if status == 401:
+        sys.exit("That token was not accepted. Check it with your facilitator.")
+    cfg = body.get("config", {})
+    print(f"\n  {_load()['url']}\n")
+    for key in ("MODEL_TIER", "MAX_TOKENS", "SYSTEM_PROMPT", "RETRIEVE_K",
+                "MAX_CONCURRENT", "RESPONSE_CACHE", "SEMANTIC_CACHE",
+                "PREFIX_CACHE", "ROUTE_EASY", "SHED_ABOVE_QUEUE"):
+        if key in cfg:
+            print(f"    {key:<22} {cfg[key]}")
+    print()
+
+
+def main():
+    p = argparse.ArgumentParser(prog="nimbus", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    i = sub.add_parser("init"); i.add_argument("url"); i.add_argument("token")
+    i.set_defaults(func=cmd_init)
+
+    sub.add_parser("brief").set_defaults(func=cmd_brief)
+    sub.add_parser("status").set_defaults(func=cmd_status)
+
+    for name, fn in (("baseline", cmd_baseline), ("bench", cmd_bench)):
+        b = sub.add_parser(name)
+        b.add_argument("--label", default="")
+        b.add_argument("--requests", type=int)
+        b.add_argument("--rate", type=float)
+        b.add_argument("--concurrency", type=int)
+        b.set_defaults(func=fn)
+
+    sub.add_parser("diagnose").set_defaults(func=cmd_diagnose)
+
+    h = sub.add_parser("hypothesis")
+    h.add_argument("--slice", required=True,
+                   help="where the time went, e.g. 'app queue wait'")
+    h.add_argument("--proof", required=True,
+                   help="the number that says so")
+    h.add_argument("--model", action="store_true",
+                   help="set if you think the model is implicated")
+    h.add_argument("--lever", help="the setting you predict will help")
+    h.add_argument("--expect", help="what you predict will move")
+    h.set_defaults(func=cmd_hypothesis)
+
+    s = sub.add_parser("set"); s.add_argument("pairs", nargs="+")
+    s.set_defaults(func=cmd_set)
+
+    args = p.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

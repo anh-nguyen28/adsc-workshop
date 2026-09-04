@@ -1,0 +1,46 @@
+
+NIMBUS BENCHMARK - run 0  prompt
+====================================================================
+requests     16 ok · 0 shed · 0 failed      duration  14.1 s
+throughput   1.1 req/s · 36 output tok/s
+
+latency      median     0.69 s
+             p95        0.90 s   SLO 1.50 s   PASS
+             slowest    1.13 s
+TTFT         p95        0.69 s
+             note: with 16 requests, "p95" is the 2nd-slowest
+             request, not a true percentile. Repeat runs vary ~12%.
+
+             ── where the time went ─────────────────────────────
+                      p95 req  p95 each
+  client + network     0.07 s         -  ██
+  app queue wait       0.00 s     0.00s  ▏
+  cache lookup         0.00 s     0.00s  ▏
+  retrieve             0.02 s     0.02s  █
+  assemble             0.00 s     0.00s  ▏
+  generate             0.81 s     0.81s  ████████████████████████
+  other (app)          0.00 s         -  ▏
+                     --------
+  sum of rows          0.90 s   end-to-end 0.90 s · residual +0.0%
+
+             ── how the model behaved ───────────────────────────
+  provider retries        0           upstream status: none
+  provider           google
+
+             ── work per request ────────────────────────────────
+  input tokens        1,180 avg      baseline 226 · +422%
+  output tokens          32 avg      baseline 31 · normal
+  cache hit rate         0%
+  prefix-cached          0%          0 of 18,872 input tokens
+
+cost         $0.434 / 1k requests
+             $1,952 tokens + $70 Cloud Run estimate
+             $2,022 / month @ 150,000/day   budget $1,500   FAIL
+
+--------------------------------------------------------------------
+VERDICT  1/2 constraints met
+READ THIS FIRST
+  Largest contributor to the p95 request: GENERATE (90%).
+  Then: client + network 8%, retrieve 2%.
+  Below 1% of the budget: other (app), app queue wait, assemble, cache lookup.
+  At baseline: tokens out.

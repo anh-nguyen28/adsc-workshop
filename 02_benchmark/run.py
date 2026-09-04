@@ -13,8 +13,12 @@ How it works
    not all show up at once. A benchmark that fires everything simultaneously
    reports a TTFT that no user would ever experience.
 4. Time every request individually off the streamed response: TTFT from the
-   first chunk, end-to-end from the last, inter-token latency from the gaps.
-   The server reports its own queue-wait/compute split in the final event.
+   first chunk, end-to-end from the last. The server reports its own
+   queue-wait/compute split AND its per-stage durations in the final event;
+   both are recorded here. Keeping the stage breakdown is what lets the report
+   attribute latency to retrieval, prompt assembly or generation instead of to
+   one undifferentiated "compute" blob -- the difference between diagnosing a
+   bottleneck and guessing at one.
 5. Aggregate into PERCENTILES, not averages. The tail is the whole lesson.
 6. Price it from scenario.json and judge it against the SLO and the budget.
 """
@@ -91,6 +95,9 @@ async def one_request(client, url, question, results, sem):
             "itl_ms": (sum(itls) / len(itls) * 1000) if itls else 0.0,
             "queue_wait_ms": stats.get("queue_wait_ms", 0.0),
             "compute_ms": stats.get("compute_ms", 0.0),
+            "stages_ms": stats.get("stages_ms", {}),
+            "upstream_retries": stats.get("upstream_retries", 0),
+            "provider_status": stats.get("provider_status"),
             "tokens_in": stats.get("tokens_in", 0),
             "tokens_out": stats.get("tokens_out", 0),
             "tokens_cached": stats.get("tokens_cached", 0),

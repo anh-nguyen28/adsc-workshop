@@ -27,6 +27,32 @@ single place to enforce request limits.
    `/metrics` and `/reload`; it is not used by participants.
 6. A deployer identity with Cloud Run deploy, Artifact Registry write/build,
    service-account-use, and the required Cloud Build permissions.
+7. **Build permissions for the Cloud Build runner.** Projects created from
+   about 2024 onward no longer grant the Compute Engine default service
+   account any roles, and Cloud Build runs as that account by default. Without
+   the grant below `gcloud builds submit` fails at the *first* step, before any
+   build output, with:
+
+   ```text
+   ERROR: could not resolve source: ... does not have storage.objects.get
+   access to the Google Cloud Storage object
+   ```
+
+   Least-privilege fix — three roles, nothing that can deploy or read secrets:
+
+   ```bash
+   SA="$(gcloud projects describe "$GOOGLE_CLOUD_PROJECT" \
+        --format='value(projectNumber)')-compute@developer.gserviceaccount.com"
+   for role in roles/logging.logWriter \
+               roles/artifactregistry.writer \
+               roles/storage.objectViewer; do
+     gcloud projects add-iam-policy-binding "$GOOGLE_CLOUD_PROJECT" \
+       --member="serviceAccount:${SA}" --role="$role" --condition=None
+   done
+   ```
+
+   `roles/cloudbuild.builds.builder` is the commonly documented single-role
+   alternative; it also works and grants rather more.
 
 No service-account JSON key, API key, or admin token should be added to this
 repository. Cloud Run uses Application Default Credentials from its runtime
@@ -74,6 +100,39 @@ managed provider does not include usage in a streaming response, the report
 marks the cost verdict as unknown instead of treating zero tokens as free.
 
 ## Model choice
+
+**Verify the model with a real request before the session.** `warm()` validates
+credentials, not model access, so a service configured with a model the project
+cannot reach starts up *healthy* and then fails every `/ask` with a 404. On
+`adsc-nimbus`, `mistral-small-2503` is exactly this case: it returns 404 in both
+`us-central1` and `global` because Model Garden access was never granted.
+
+The workshop therefore runs on Gemini, with two real tiers:
+
+| Setting | Value |
+| --- | --- |
+| `NIMBUS_GOOGLE_API_STYLE` | `gemini` |
+| `NIMBUS_GOOGLE_MODEL_SMALL` | `gemini-2.5-flash-lite` |
+| `NIMBUS_GOOGLE_MODEL_LARGE` | `gemini-2.5-flash` |
+| `NIMBUS_GEMINI_THINKING_BUDGET` | `0` |
+
+Leave `NIMBUS_GOOGLE_MODEL_ID` **unset**. It pins both tiers to a single model,
+which silently removes routing as a lever.
+
+`NIMBUS_GEMINI_THINKING_BUDGET=0` is not a tuning preference. Gemini 2.5 spends
+the *output* token budget thinking before it answers, so at the workshop default
+of `MAX_TOKENS=32` the model returns `finishReason=MAX_TOKENS` with **no text at
+all** and `thoughtsTokenCount=29` — every answer empty, while latency and cost
+still read as perfectly healthy. Use `none` to omit the field entirely, which
+`gemini-2.5-pro` requires because it refuses a zero budget.
+
+The `decode` incident intentionally overrides the large tier to
+`gemini-2.5-pro`, uses its minimum explicit thinking budget of `128`, and
+selects the `VERBOSE` system prompt so output work is measurably the
+bottleneck. Pro cannot disable thinking; if it receives the old zero-budget
+default, the adapter omits that field and lets Pro use automatic thinking.
+
+
 
 The adapter defaults to Google’s managed `mistral-small-2503` endpoint in
 `us-central1`, and the model ID is configurable. The current Google pricing

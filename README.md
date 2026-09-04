@@ -227,7 +227,7 @@ tuned without rebuilding the image. Important settings are:
 | `RESPONSE_CACHE` | Reuses an identical completed answer |
 | `SEMANTIC_CACHE` | Reuses answers for sufficiently similar questions |
 | `MAX_TOKENS` | Caps generated output and model cost |
-| `SYSTEM_PROMPT` | Chooses `LONG` or `TRIMMED` instructions |
+| `SYSTEM_PROMPT` | Chooses `LONG`, `TRIMMED`, or `VERBOSE` instructions |
 | `RETRIEVE_K` | Controls how many note chunks enter the prompt |
 | `MAX_CONCURRENT` | Limits in-process model work |
 | `SHED_ABOVE_QUEUE` | Returns `429` when the queue is too deep |

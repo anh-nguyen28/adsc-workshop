@@ -17,6 +17,7 @@ import os
 import pathlib
 import secrets
 import sys
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header
@@ -27,6 +28,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(pathlib.Path(__file__).parent))
 
 import config          # noqa: E402
+import incident        # noqa: E402
 import levers          # noqa: E402
 import retrieval       # noqa: E402
 from timing import Timer  # noqa: E402
@@ -44,6 +46,18 @@ else:
     torch.set_num_threads(1)
 
 _state: dict = {"semaphore": None, "waiting": 0, "served": 0, "shed": 0, "failed": 0}
+
+# What a team has committed to, in the order they committed to it. Held in
+# memory on purpose for now: it belongs to one team's one service, and the
+# durable copy is a later phase.
+_declarations: list[dict] = []
+
+# Round 2 refuses a lever change until a diagnosis is on record. Enforcing this
+# in the service rather than by a facilitator walking the room is the point:
+# otherwise a team can flip switches until something goes green and write the
+# reasoning afterwards, which is the exact habit the activity exists to break.
+def _require_hypothesis() -> bool:
+    return os.environ.get("NIMBUS_REQUIRE_HYPOTHESIS", "").lower() in {"1", "true", "yes"}
 
 _CONFIG_KEYS = ("MODEL_BACKEND", "RESPONSE_CACHE", "PREFIX_CACHE", "SEMANTIC_CACHE",
                 "SEMANTIC_CACHE_THRESHOLD", "MAX_TOKENS",
@@ -78,6 +92,48 @@ class Ask(BaseModel):
 @app.get("/", include_in_schema=False)
 async def participant_ui() -> FileResponse:
     return FileResponse(pathlib.Path(__file__).resolve().parent / "web" / "index.html")
+
+
+@app.get("/brief")
+async def brief() -> dict:
+    """The incident as a user would report it, plus the targets to hit.
+
+    Public on purpose: this is the symptom, and participants are meant to have
+    it. The CAUSE is not here and is not anywhere the service can reach -- the
+    catalog that holds it lives with the facilitators, and this text arrives as
+    a deploy-time string with the answer already stripped out.
+    """
+    scenario_path = pathlib.Path(__file__).resolve().parents[1] / "scenario.json"
+    try:
+        constraints = json.loads(scenario_path.read_text())["constraints"]
+    except Exception:  # noqa: BLE001
+        constraints = {}
+    return {
+        "title": os.environ.get("NIMBUS_INCIDENT_TITLE", "Nimbus is degraded"),
+        "reported": os.environ.get(
+            "NIMBUS_INCIDENT_BRIEF",
+            "Students say the assistant is not behaving the way it should."),
+        "user_impact": os.environ.get("NIMBUS_INCIDENT_IMPACT", ""),
+        "targets": {
+            "p95_latency_s": constraints.get("slo_p95_latency_s"),
+            "usd_per_month": constraints.get("budget_usd_per_month"),
+            "quality_pct": constraints.get("quality_bar_eval_pct"),
+        },
+        # The traffic this service is receiving. NOT a secret -- "finals week
+        # traffic is 5x normal" is part of the incident a user would report --
+        # and it has to come from here, because each incident was calibrated
+        # under a specific load. A client that invents its own concurrency
+        # measures a different system: sending 8-way traffic at a service
+        # calibrated for 2 manufactures a queue that is not the incident.
+        "traffic": {
+            "requests": int(os.environ.get("NIMBUS_TRAFFIC_REQUESTS", "16")),
+            "rate": float(os.environ.get("NIMBUS_TRAFFIC_RATE", "4.0")),
+            "concurrency": int(os.environ.get("NIMBUS_TRAFFIC_CONCURRENCY", "8")),
+        },
+        "task": ("Attribute the latency before you change anything. The report "
+                 "names the largest contributor; it will not tell you what to do "
+                 "about it."),
+    }
 
 
 @app.get("/health")
@@ -137,6 +193,106 @@ def _trace(request_id: str, stage: str, state: str, label: str,
     return _sse({"trace": event})
 
 
+class LeverChange(BaseModel):
+    # Free-form on purpose: config.coerce_lever owns the allow-list and the
+    # bounds, so there is exactly one place that decides what is legal.
+    model_config = {"extra": "allow"}
+
+
+class Hypothesis(BaseModel):
+    dominant_slice: str = Field(min_length=1, max_length=64)
+    model_implicated: bool
+    proof_metric: str = Field(min_length=1, max_length=200)
+    predicted_lever: str | None = Field(default=None, max_length=64)
+    predicted_direction: str | None = Field(default=None, max_length=200)
+
+
+@app.post("/hypothesis")
+async def record_hypothesis(body: Hypothesis,
+                            x_nimbus_admin_token: str | None = Header(default=None)) -> dict:
+    """Record what this team thinks is wrong, before they change anything.
+
+    Deliberately NOT graded here. Confirming a diagnosis at the moment it is
+    offered ends the investigation before it has been tested; the team finds
+    out by changing one thing and watching whether the number moves the way
+    they said it would.
+    """
+    if not _admin_allowed(x_nimbus_admin_token):
+        return JSONResponse({"error": "team token required"}, status_code=401)
+    entry = {"kind": "hypothesis", "at": time.time(), **body.model_dump()}
+    _declarations.append(entry)
+    return {"recorded": True, "hypotheses": sum(
+        1 for d in _declarations if d["kind"] == "hypothesis")}
+
+
+@app.get("/declarations")
+async def declarations(x_nimbus_admin_token: str | None = Header(default=None)):
+    if not _admin_allowed(x_nimbus_admin_token):
+        return JSONResponse({"error": "team token required"}, status_code=401)
+    return {"declarations": _declarations,
+            "hypothesis_required": _require_hypothesis()}
+
+
+@app.post("/levers")
+async def set_levers(body: LeverChange,
+                     x_nimbus_admin_token: str | None = Header(default=None)):
+    """Change one setting on the RUNNING service.
+
+    /reload re-reads the container's config.py, which a participant cannot
+    edit, so on Cloud Run it can never apply their change. Redeploying can --
+    at three and a half minutes a time, which is the activity over. This takes
+    the value from the request instead, and applies it in about a second.
+
+    Changes live in this process only. That is correct for the workshop, where
+    each team owns one service pinned to a single instance; it would need a
+    shared store the moment a service is allowed to scale out.
+    """
+    if not _admin_allowed(x_nimbus_admin_token):
+        return JSONResponse({"error": "team token required"}, status_code=401)
+
+    requested = body.model_dump()
+    if not requested:
+        return JSONResponse(
+            {"error": "no settings supplied",
+             "available": sorted(config.LEVERS)}, status_code=400)
+
+    if _require_hypothesis() and not any(
+            d["kind"] == "hypothesis" for d in _declarations):
+        return JSONResponse(
+            {"error": "diagnose first",
+             "detail": "Record what you think is wrong, and which number says "
+                       "so, before changing a setting.",
+             "how": "POST /hypothesis"},
+            status_code=409)
+
+    # Validate EVERY value before applying ANY of them, so a rejected change
+    # cannot leave the service half-changed and the run unattributable.
+    coerced, errors = {}, {}
+    for name, value in requested.items():
+        try:
+            coerced[name] = config.coerce_lever(name, value)
+        except ValueError as exc:
+            errors[name] = str(exc)
+    if errors:
+        return JSONResponse({"error": "invalid settings", "detail": errors,
+                             "applied": False}, status_code=400)
+
+    before = {name: getattr(config, name) for name in coerced}
+    for name, value in coerced.items():
+        setattr(config, name, value)
+
+    # A lever change is measured against a cold cache, not against answers
+    # accumulated under the previous settings.
+    levers.reset_caches()
+    _state["semaphore"] = asyncio.Semaphore(config.MAX_CONCURRENT * config.REPLICAS)
+    _state["served"] = _state["shed"] = _state["failed"] = 0
+    _declarations.append({"kind": "change", "at": time.time(),
+                          "before": before, "after": coerced})
+
+    return {"applied": True, "changed": coerced, "previous": before,
+            "config": {k: getattr(config, k) for k in _CONFIG_KEYS}}
+
+
 @app.post("/reload")
 async def reload_config(x_nimbus_admin_token: str | None = Header(default=None)) -> dict:
     """Re-read config.py without restarting.
@@ -178,7 +334,7 @@ async def ask(body: Ask):
     timer = Timer()
     request_id = secrets.token_hex(4)
 
-    # ── Rung 6 · load shedding ───────────────────────────────────────────
+    # ── Load shedding ────────────────────────────────────────────────────
     # Fail fast and honestly rather than time out slowly. Every shed request
     # is still a student who did not get an answer.
     if config.SHED_ABOVE_QUEUE is not None and _state["waiting"] > config.SHED_ABOVE_QUEUE:
@@ -189,7 +345,7 @@ async def ask(body: Ask):
             headers={"Retry-After": "2", "X-Queue-Depth": str(_state["waiting"])},
         )
 
-    # ── Rung 5 · admission control ───────────────────────────────────────
+    # ── Admission control ────────────────────────────────────────────────
     semaphore = _state["semaphore"]
     if semaphore is None:
         return JSONResponse({"error": "service is still starting"}, status_code=503)
@@ -197,7 +353,8 @@ async def ask(body: Ask):
     question = body.question
 
     async def stream():
-        stats = {"tokens_in": 0, "tokens_out": 0, "usage_source": "local"}
+        stats = {"tokens_in": 0, "tokens_out": 0, "usage_source": "local",
+                 "upstream_retries": 0, "provider_status": None}
         cache_state, tier = "miss", "-"
         acquired = False
         current_stage = "request"
@@ -222,7 +379,7 @@ async def ask(body: Ask):
                          "Request admitted to the service",
                          timer.queue_wait_ms)
 
-            # ── Rung 2 · caches, cheapest first ──────────────────────────
+            # ── Caches ──────────────────────────────────────────────────
             # The semantic cache is checked first because a hit skips
             # retrieval AND generation. The exact cache is keyed on the
             # assembled prompt, so it can only be checked after retrieval.
@@ -251,6 +408,12 @@ async def ask(body: Ask):
                 yield _trace(request_id, "retrieve", "running", "Retrieve course notes",
                              f"Searching {retrieval.size()} indexed note chunks")
                 with timer.stage("retrieve"):
+                    # Injected inside the stage timer on purpose: degradation
+                    # that lands outside the ledger is time a participant
+                    # cannot attribute to anything, which defeats the exercise.
+                    # Other stages take a hook the same way if an incident ever
+                    # needs one; today only retrieval has a real dependency.
+                    await incident.delay("retrieve", question)
                     sources = retrieval.search_details(question, config.RETRIEVE_K)
                     chunks = [source["text"] for source in sources]
                 yield _trace(request_id, "retrieve", "complete", "Retrieve course notes",
@@ -328,6 +491,11 @@ async def ask(body: Ask):
                 "usage_source": stats.get("usage_source", "unknown"),
                 "provider": stats.get("provider", "local"),
                 "model": stats.get("model", ""),
+                # Provider retries are part of the latency story, not an
+                # implementation detail: a request that succeeded on its third
+                # attempt is slow for a reason no stage timer can show.
+                "upstream_retries": stats.get("upstream_retries", 0),
+                "provider_status": stats.get("provider_status"),
                 "cache": cache_state,
                 "tier": tier,
             }})

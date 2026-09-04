@@ -4,15 +4,15 @@
   "feature": "AI study assistant for university courses",
   "incident": "Went viral during finals week. Traffic is 5x normal and climbing.",
   "constraints": {
-    "slo_p95_latency_s": 5.0,
+    "slo_p95_latency_s": 1.5,
     "budget_usd_per_month": 1500,
     "quality_bar_eval_pct": 80,
-    "_comment": "SLO set from measured data: the ladder reaches it at rung 4 on a 4-core laptop and rung 5 on a 2-core Codespace. Re-measure on your own hardware before the session -- latency is hardware-dependent, cost is not."
+    "_comment": "DERIVED FROM REPEATED MEASUREMENT on Cloud Run + Gemini 2.5 Flash, 2026-09-04, warm instance. Healthy p95 over four runs: 0.74 0.82 0.88 1.05 -- the spread is the provider's, measured directly at p50 838ms / p95 1492ms. A single healthy run is NOT enough to set this from; the first attempt used one 0.74s run, and the next healthy run came in at 1.14s and scored MARGINAL against its own SLO. 1.5s clears the worst healthy run by 30% and fails queue (3.19-3.62s) by more than double. Cost at $1,500/mo separates prompt ($1,953) and decode ($12,852) from everything else ($158-$648). RE-DERIVE on the deployment the session will use, from SEVERAL runs, with a WARM instance -- a cold container moved the dominant ledger row onto the wrong component entirely."
   },
   "traffic": {
     "requests_per_day": 150000,
-    "qps_peak": 45,
-    "note": "Monthly cost is projected from requests_per_day x 30. Projecting from peak QPS held 24/7 would imply 116M requests a month, which is not what a campus tool looks like."
+    "qps_peak": 5,
+    "note": "Monthly cost is projected from requests_per_day x 30. 150,000/day is 1.7 req/s on average; a peak of 5 req/s is a ~3x peak-to-average ratio, which is what a campus tool looks like in the evening. The old figure of 45 was a 26x ratio and did not survive arithmetic: at the measured ~0.7s service time one instance handles ~2.9 req/s, so 45 req/s implied 16 instances and an infrastructure line of ~$1,100/month against a $1,500 budget -- a HEALTHY service would have failed on cost. The inconsistency was in the peak, not in the infrastructure price."
   },
   "prices": {
     "_comment": "USD per 1M tokens, plus a flat monthly cost per replica. cached_input is the discounted rate for tokens served from the prefix cache -- 10% of the normal input rate, which is roughly what commercial providers charge.",
@@ -26,15 +26,46 @@
       "output": 2.4,
       "cached_input": 0.06
     },
-    "replica_usd_per_month": 300
+    "replica_usd_per_month": 300,
+    "cloudrun_usd_per_month": 140,
+    "_cloudrun_comment": "TWO always-on 1-vCPU/1-GiB Cloud Run instances at ~$70 each: about $62 vCPU + $6 memory per instance per month in us-central1, plus negligible request charges. Two is what the traffic above actually needs -- 1.7 req/s average against ~2.9 req/s per instance, with headroom for the 5 req/s peak. min-instances=1 is required per service, because a cold container moves the largest row of the report onto the wrong component. Override at runtime with NIMBUS_CLOUD_RUN_MONTHLY_ESTIMATE_USD."
   },
   "provider_prices": {
     "google:mistral-small-2503": {
-      "input": 0.10,
-      "output": 0.30,
-      "cached_input": 0.10,
-      "_comment": "USD per 1M tokens; verify current Google pricing before the event. Cloud Run infrastructure is separate."
+      "input": 0.1,
+      "output": 0.3,
+      "cached_input": 0.1,
+      "_comment": "RETIRED FOR THIS PROJECT: returns HTTP 404 in us-central1 and global on adsc-nimbus; Model Garden access was never granted. Kept for reference."
+    },
+    "google:gemini-2.5-flash": {
+      "input": 0.3,
+      "output": 2.5,
+      "cached_input": 0.03,
+      "_comment": "VERIFIED against ai.google.dev/gemini-api/docs/pricing on 2026-09-04, paid tier, per 1M tokens, text modality. Output price INCLUDES thinking tokens -- which is why the adapter adds thoughtsTokenCount to tokens_out. Pro is tiered above 200k-token prompts; this workshop's prompts are 200-1200 tokens, so the lower tier always applies. These are Gemini API rates; confirm against the Vertex AI page for your project before the session if the two ever diverge."
+    },
+    "google:gemini-2.5-pro": {
+      "input": 1.25,
+      "output": 10.0,
+      "cached_input": 0.125,
+      "_comment": "VERIFIED against ai.google.dev/gemini-api/docs/pricing on 2026-09-04, paid tier, per 1M tokens, text modality. Output price INCLUDES thinking tokens -- which is why the adapter adds thoughtsTokenCount to tokens_out. Pro is tiered above 200k-token prompts; this workshop's prompts are 200-1200 tokens, so the lower tier always applies. These are Gemini API rates; confirm against the Vertex AI page for your project before the session if the two ever diverge."
+    },
+    "google:gemini-2.5-flash-lite": {
+      "input": 0.1,
+      "output": 0.4,
+      "cached_input": 0.01,
+      "_comment": "VERIFIED against ai.google.dev/gemini-api/docs/pricing on 2026-09-04, paid tier, per 1M tokens, text modality. Output price INCLUDES thinking tokens -- which is why the adapter adds thoughtsTokenCount to tokens_out. Pro is tiered above 200k-token prompts; this workshop's prompts are 200-1200 tokens, so the lower tier always applies. These are Gemini API rates; confirm against the Vertex AI page for your project before the session if the two ever diverge."
     }
+  },
+  "baselines": {
+    "_comment": "Healthy reference values printed beside a measurement so that 'normal' means something to a participant. MEASURED, never estimated -- regenerate with facilitators/calibrate_incidents.py after any change to the corpus, system prompt, retrieval settings or model tiers. null means 'not calibrated on this hardware yet', and the report then prints the number without a comparator rather than inventing one. Token COUNTS transfer between machines and do not move with load. Every millisecond value here does neither, so each must be calibrated under the SAME arrival rate and concurrency as the runs it is compared against -- a baseline taken on an idle server makes a busy queue look identical to a slow model.",
+    "_measured_on": "arm64 Darwin \u00b7 8 cores \u00b7 google backend \u00b7 calm traffic (rate 1.0, concurrency 2) \u00b7 2026-09-04 08:19:09",
+    "default": {
+      "tokens_in": 226,
+      "tokens_out": 31,
+      "retrieve_ms": null,
+      "generate_ms": null
+    },
+    "_backend": "google"
   },
   "bench_defaults": {
     "requests": 16,
