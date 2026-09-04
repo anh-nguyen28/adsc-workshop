@@ -2,12 +2,17 @@
 ╔══════════════════════════════════════════════════════════════════════════╗
 ║  THIS IS THE ONLY FILE YOU EDIT.                                         ║
 ║                                                                          ║
-║  Change ONE lever, then re-run `make bench` and write down what moved.   ║
-║  Fill the rungs on your decision sheet IN ORDER — you may not spend      ║
-║  money on rung 5 until rungs 1-4 are filled in.                          ║
+║  Change ONE setting, re-measure, and write down what moved. Changing two  ║
+║  at once tells you that something helped, but not which thing.           ║
 ╚══════════════════════════════════════════════════════════════════════════╝
 
-Everything here ships OFF or EXPENSIVE on purpose. That is the incident.
+Every setting Nimbus exposes, with an honest note on what it actually does.
+The list is not ordered by usefulness and it is not a checklist: which of
+these is worth touching depends entirely on what your measurements say is
+slow, and most of them will do nothing for your incident.
+
+Find out what is slow first. The benchmark report breaks the time down for
+you; the settings below cannot tell you which one you need.
 """
 
 import os
@@ -23,18 +28,9 @@ if MODEL_BACKEND not in {"local", "ollama", "google"}:
     raise ValueError("NIMBUS_MODEL_BACKEND must be 'local', 'ollama', or 'google'")
 
 
-# ─── RUNG 1 · CONFIRM THE BOTTLENECK ─────────────────────────────────────
-# Nothing to change here. Run `make bench` and read two numbers off the
-# report before you touch anything else:
-#
-#     queue wait p95   ← people standing in line
-#     compute  p95     ← the model actually working
-#
-# Whichever is bigger tells you what kind of problem you have. Write it on
-# the decision sheet. Teams that skip this step buy the wrong fix.
-
-
-# ─── RUNG 2 · IMPROVE EFFICIENCY (free) ──────────────────────────────────
+# ─── CACHING ─────────────────────────────────────────────────────────────
+# Three different things that all get called "caching". They fail in
+# different ways and they help with different problems.
 
 RESPONSE_CACHE = False
 # Exact-match cache keyed on the fully assembled prompt. During finals week a
@@ -67,16 +63,18 @@ SEMANTIC_CACHE_THRESHOLD = 0.92
 # Lower = more hits, more risk of answering the wrong question.
 
 
-# ─── RUNG 3 · DO LESS WORK PER REQUEST ───────────────────────────────────
+# ─── HOW MUCH WORK EACH REQUEST DOES ─────────────────────────────────────
 
 MAX_TOKENS = 32
 # Hard cap on generated tokens. Latency is roughly linear in this number,
 # and output tokens cost several times what input tokens cost.
-# Ask yourself: does a study assistant actually need 96 tokens to answer?
+# Ask yourself: how long does a good answer to a study question
+# actually need to be?
 
 SYSTEM_PROMPT = "LONG"
 # "LONG"    — the 1,200-token instruction block Nimbus shipped with
 # "TRIMMED" — the 180-token version that says the same thing
+# "VERBOSE" — asks for a fuller teaching answer; useful when testing decode
 # Every request pays to re-read this. Nobody has ever audited it.
 
 RETRIEVE_K = 4
@@ -84,7 +82,7 @@ RETRIEVE_K = 4
 # not free: it lands in the prefill on every single request.
 
 
-# ─── RUNG 4 · REBALANCE ──────────────────────────────────────────────────
+# ─── WHICH MODEL ANSWERS ─────────────────────────────────────────────────
 
 ROUTE_EASY = False
 # Send easy questions (short, factual, definitional) to the small model and
@@ -99,7 +97,7 @@ MODEL_TIER = "large"
 #    Before you ship it, look at what the eval card says about quality.
 
 
-# ─── RUNG 5 · ADD CAPACITY (this one costs money) ────────────────────────
+# ─── CAPACITY ────────────────────────────────────────────────────────────
 
 MAX_CONCURRENT = 2
 # How many requests are allowed to compute at once. Everything else waits in
@@ -115,7 +113,7 @@ REPLICAS = 1
 # The only lever on this page that costs real money.
 
 
-# ─── RUNG 6 · LOAD MANAGEMENT ────────────────────────────────────────────
+# ─── WHAT TO DO WHEN YOU CANNOT SERVE EVERYONE ───────────────────────────
 
 SHED_ABOVE_QUEUE = None
 # Set to an integer to reject requests with 429 + Retry-After once the queue
@@ -157,19 +155,84 @@ if os.environ.get("NIMBUS_MODEL_TIER") is not None:
 MAX_CONCURRENT = _env_int("NIMBUS_MAX_CONCURRENT", MAX_CONCURRENT)
 SHED_ABOVE_QUEUE = _env_int("NIMBUS_SHED_ABOVE_QUEUE", SHED_ABOVE_QUEUE)
 
-if MAX_TOKENS is None or MAX_TOKENS < 1:
-    raise ValueError("MAX_TOKENS must be at least 1")
-if MAX_TOKENS > 1024:
-    raise ValueError("MAX_TOKENS must be at most 1024")
-if RETRIEVE_K is None or RETRIEVE_K < 0:
-    raise ValueError("RETRIEVE_K must be at least 0")
-if MAX_CONCURRENT is None or MAX_CONCURRENT < 1:
-    raise ValueError("MAX_CONCURRENT must be at least 1")
-if SYSTEM_PROMPT not in {"LONG", "TRIMMED"}:
-    raise ValueError("SYSTEM_PROMPT must be LONG or TRIMMED")
-if MODEL_TIER not in {"small", "large"}:
-    raise ValueError("MODEL_TIER must be small or large")
-if not 0 <= SEMANTIC_CACHE_THRESHOLD <= 1:
-    raise ValueError("SEMANTIC_CACHE_THRESHOLD must be between 0 and 1")
-if SHED_ABOVE_QUEUE is not None and SHED_ABOVE_QUEUE < 0:
-    raise ValueError("SHED_ABOVE_QUEUE must be at least 0 or None")
+# ─── THE LEVER SCHEMA ─────────────────────────────────────────────────────
+# One definition of every setting a participant may change, and the bounds it
+# must satisfy. Startup validation and the runtime /levers endpoint both read
+# it, so a value applied to a running service gets exactly the checks a value
+# read from the file gets. Two copies of these bounds is how a service ends up
+# accepting at runtime what it would have rejected at boot.
+#
+# Deliberately absent: MODEL_BACKEND, REPLICAS and anything about the incident.
+# The backend is a deployment fact, REPLICAS is a local simulation with no
+# meaning on Cloud Run, and the incident is the thing being diagnosed.
+LEVERS: dict[str, dict] = {
+    "RESPONSE_CACHE":           {"type": "bool"},
+    "PREFIX_CACHE":             {"type": "bool"},
+    "SEMANTIC_CACHE":           {"type": "bool"},
+    "SEMANTIC_CACHE_THRESHOLD": {"type": "float", "min": 0.0, "max": 1.0},
+    "MAX_TOKENS":               {"type": "int", "min": 1, "max": 1024},
+    "SYSTEM_PROMPT":            {"type": "choice", "choices": ("LONG", "TRIMMED", "VERBOSE")},
+    "RETRIEVE_K":               {"type": "int", "min": 0, "max": 20},
+    "ROUTE_EASY":               {"type": "bool"},
+    "MODEL_TIER":               {"type": "choice", "choices": ("small", "large")},
+    "MAX_CONCURRENT":           {"type": "int", "min": 1, "max": 64},
+    "SHED_ABOVE_QUEUE":         {"type": "int", "min": 0, "nullable": True},
+}
+
+_TRUE = {"1", "true", "yes", "on"}
+_FALSE = {"0", "false", "no", "off"}
+
+
+def coerce_lever(name: str, value):
+    """Validate and convert one lever value. Raises ValueError with a sentence
+    a participant can act on, never a stack trace -- these arrive from a form
+    under time pressure."""
+    spec = LEVERS.get(name)
+    if spec is None:
+        raise ValueError(f"{name} is not a setting you can change. "
+                         f"Available: {', '.join(sorted(LEVERS))}")
+    kind = spec["type"]
+
+    if value is None or (isinstance(value, str) and value.strip() == ""):
+        if spec.get("nullable"):
+            return None
+        raise ValueError(f"{name} cannot be empty")
+
+    if kind == "bool":
+        if isinstance(value, bool):
+            return value
+        text = str(value).strip().lower()
+        if text in _TRUE:
+            return True
+        if text in _FALSE:
+            return False
+        raise ValueError(f"{name} must be true or false, not {value!r}")
+
+    if kind == "choice":
+        text = str(value).strip()
+        for choice in spec["choices"]:
+            if text.lower() == choice.lower():
+                return choice
+        raise ValueError(f"{name} must be one of "
+                         f"{' or '.join(spec['choices'])}, not {value!r}")
+
+    if kind in {"int", "float"}:
+        try:
+            number = int(value) if kind == "int" else float(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{name} must be a number, not {value!r}") from None
+        low, high = spec.get("min"), spec.get("max")
+        if low is not None and number < low:
+            raise ValueError(f"{name} must be at least {low}, not {number}")
+        if high is not None and number > high:
+            raise ValueError(f"{name} must be at most {high}, not {number}")
+        return number
+
+    raise ValueError(f"{name} has an unknown type {kind!r}")
+
+
+# Validate what the file and the environment produced, using the same rules a
+# runtime change will be held to.
+for _name in LEVERS:
+    globals()[_name] = coerce_lever(_name, globals()[_name])
+del _name

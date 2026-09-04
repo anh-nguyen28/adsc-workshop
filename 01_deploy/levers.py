@@ -14,7 +14,10 @@ from embed import embed_one
 # ── System prompts ────────────────────────────────────────────────────────
 # The LONG one is what Nimbus shipped with: written by three different people
 # over six months, never audited, re-read by the model on every single request.
-# The TRIMMED one says the same thing. Comparing them is rung 3.
+# The TRIMMED one says the same thing.
+# The VERBOSE one keeps the grounding and safety rules but asks for a fuller
+# teaching response. It exists for the decode incident, where output work is
+# intentionally the bottleneck.
 
 SYSTEM_PROMPT_LONG = """You are Nimbus, an AI study assistant built to support university students across their coursework. Your purpose is to help students understand course material, not to do their work for them. You should always aim to be accurate, clear, patient and encouraging in every interaction you have with a student who comes to you for help with their studies.
 
@@ -37,7 +40,22 @@ Respond in the same language the student used. Keep formatting simple: short par
 SYSTEM_PROMPT_TRIMMED = """You are Nimbus, a university study assistant. Answer only from the course notes below; if they do not cover it, say so. Be accurate, concise and encouraging. Explain concepts, but never write a graded assignment for a student. Do not invent deadlines, formulas or policies."""
 
 
+# Built from TRIMMED, not LONG, on purpose. Deriving it from the 1,200-token
+# block gave the decode incident a second anomaly: input tokens rose alongside
+# output tokens, which blurred it against the prompt-bloat incident and made its
+# own brief untrue -- answers cannot "begin instantly" behind a 788-token
+# prefill. Decode is about how much the model GENERATES, so that is the only
+# number it is allowed to move.
+SYSTEM_PROMPT_VERBOSE = SYSTEM_PROMPT_TRIMMED.replace(
+    "Be accurate, concise and encouraging.",
+    "Be accurate and encouraging, and answer in enough depth to teach the "
+    "concept rather than merely state it: give the direct answer, then explain "
+    "the idea step by step, define the key terms, and add a short worked "
+    "example when the notes support one.")
+
 def system_prompt() -> str:
+    if config.SYSTEM_PROMPT == "VERBOSE":
+        return SYSTEM_PROMPT_VERBOSE
     return SYSTEM_PROMPT_LONG if config.SYSTEM_PROMPT == "LONG" else SYSTEM_PROMPT_TRIMMED
 
 
@@ -56,7 +74,7 @@ def build_prompt(question: str, chunks: list[str]) -> str:
     return f"{static_prefix()}{notes}\n\nSTUDENT QUESTION: {question}\nANSWER:"
 
 
-# ── Rung 2 · exact-match RESPONSE cache ───────────────────────────────────
+# ── Exact-match RESPONSE cache ────────────────────────────────────────────
 _exact: dict[str, str] = {}
 
 
@@ -71,7 +89,7 @@ def exact_put(prompt: str, answer: str) -> None:
         _exact[hashlib.sha256(prompt.encode()).hexdigest()] = answer
 
 
-# ── Rung 2 · semantic cache ───────────────────────────────────────────────
+# ── Semantic cache ────────────────────────────────────────────────────────
 # Catches questions that MEAN the same thing but are not spelled the same way.
 # Reuses the embedding model retrieval already loaded, so the marginal cost is
 # one vector comparison.
@@ -108,7 +126,7 @@ def semantic_put(question: str, answer: str, vec=None) -> None:
     _sem_answers.append(answer)
 
 
-# ── Rung 4 · routing ──────────────────────────────────────────────────────
+# ── Routing ───────────────────────────────────────────────────────────────
 EASY_STARTERS = ("what is", "what are", "define", "when is", "when are",
                  "where is", "where are", "who is", "how many", "list the")
 

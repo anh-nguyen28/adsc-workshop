@@ -164,8 +164,11 @@ curl -N -X POST http://127.0.0.1:8000/ask \
   -d '{"question":"What is Big-O notation?"}'
 ```
 
-The response is Server-Sent Events. It contains answer deltas followed by a
-final `stats` event and `[DONE]`.
+The response is Server-Sent Events. It contains safe `trace` events describing
+the request path, answer deltas, a final `stats` event, and `[DONE]`. The
+browser UI at `/` renders the same trace, including retrieved note excerpts
+and the queue-wait versus compute split, so participants can see how the
+deployed assistant works without exposing private model reasoning.
 
 Run the benchmark:
 

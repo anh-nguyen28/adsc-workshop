@@ -82,7 +82,10 @@ async def participant_ui() -> FileResponse:
 
 @app.get("/health")
 async def health() -> dict:
-    return {"ok": True, "served": _state["served"],
+    return {"ok": True, "service": "nimbus", "status": "ready",
+            "backend": config.MODEL_BACKEND, "note_chunks": retrieval.size(),
+            "capacity": config.MAX_CONCURRENT * config.REPLICAS,
+            "served": _state["served"],
             "shed": _state["shed"], "failed": _state["failed"],
             "waiting": _state["waiting"]}
 
@@ -113,6 +116,25 @@ async def metrics(x_nimbus_admin_token: str | None = Header(default=None)) -> di
 
 def _sse(obj: dict) -> str:
     return f"data: {json.dumps(obj)}\n\n"
+
+
+def _trace(request_id: str, stage: str, state: str, label: str,
+           detail: str | None = None, duration_ms: float | None = None,
+           **metadata) -> str:
+    """Make a safe operational event for the participant activity view.
+
+    This describes observable system work without exposing the assembled
+    prompt or private model reasoning.
+    """
+    event = {"request_id": request_id, "stage": stage, "state": state,
+             "label": label}
+    if detail is not None:
+        event["detail"] = detail
+    if duration_ms is not None:
+        event["duration_ms"] = round(duration_ms, 1)
+    if metadata:
+        event["meta"] = metadata
+    return _sse({"trace": event})
 
 
 @app.post("/reload")
@@ -154,6 +176,7 @@ async def reload_config(x_nimbus_admin_token: str | None = Header(default=None))
 @app.post("/ask")
 async def ask(body: Ask):
     timer = Timer()
+    request_id = secrets.token_hex(4)
 
     # ── Rung 6 · load shedding ───────────────────────────────────────────
     # Fail fast and honestly rather than time out slowly. Every shed request
@@ -170,45 +193,110 @@ async def ask(body: Ask):
     semaphore = _state["semaphore"]
     if semaphore is None:
         return JSONResponse({"error": "service is still starting"}, status_code=503)
-    _state["waiting"] += 1
-    try:
-        await semaphore.acquire()
-    finally:
-        _state["waiting"] -= 1
-    timer.admitted()
-
     max_tokens = body.max_tokens if body.max_tokens is not None else config.MAX_TOKENS
     question = body.question
 
     async def stream():
         stats = {"tokens_in": 0, "tokens_out": 0, "usage_source": "local"}
         cache_state, tier = "miss", "-"
+        acquired = False
+        current_stage = "request"
         try:
+            yield _trace(request_id, "request", "complete", "Request received",
+                         "POST /ask · validating and admitting work")
+
+            # Keep admission inside the stream so the browser can see a real
+            # request waiting for capacity instead of jumping straight to the
+            # answer after an invisible server-side pause.
+            current_stage = "queue"
+            yield _trace(request_id, "queue", "running", "Capacity check",
+                         "Waiting for an available inference slot")
+            _state["waiting"] += 1
+            try:
+                await semaphore.acquire()
+                acquired = True
+            finally:
+                _state["waiting"] -= 1
+            timer.admitted()
+            yield _trace(request_id, "queue", "complete", "Capacity check",
+                         "Request admitted to the service",
+                         timer.queue_wait_ms)
+
             # ── Rung 2 · caches, cheapest first ──────────────────────────
             # The semantic cache is checked first because a hit skips
             # retrieval AND generation. The exact cache is keyed on the
             # assembled prompt, so it can only be checked after retrieval.
+            current_stage = "cache"
+            yield _trace(request_id, "cache", "running", "Check response cache",
+                         "Looking for a reusable answer")
             with timer.stage("cache"):
                 qvec = levers.question_vector(question)
                 answer = levers.semantic_get(question, qvec)
+            cache_lookup = "semantic-hit" if answer is not None else "miss"
             if answer is not None:
                 cache_state = "semantic-hit"
                 prompt = None
+                yield _trace(request_id, "cache", "complete", "Check response cache",
+                             "Semantic cache hit · retrieval and generation skipped",
+                             timer.stages["cache"] * 1000,
+                             result=cache_lookup)
+                yield _trace(request_id, "retrieve", "skipped", "Retrieve course notes",
+                             "Skipped because the response cache returned an answer")
+                yield _trace(request_id, "assemble", "skipped", "Build grounded prompt",
+                             "Skipped because the response cache returned an answer")
             else:
+                yield _trace(request_id, "cache", "running", "Check prompt cache",
+                             "No reusable response yet · checking after retrieval")
+                current_stage = "retrieve"
+                yield _trace(request_id, "retrieve", "running", "Retrieve course notes",
+                             f"Searching {retrieval.size()} indexed note chunks")
                 with timer.stage("retrieve"):
-                    chunks = retrieval.search(question, config.RETRIEVE_K)
+                    sources = retrieval.search_details(question, config.RETRIEVE_K)
+                    chunks = [source["text"] for source in sources]
+                yield _trace(request_id, "retrieve", "complete", "Retrieve course notes",
+                             f"Selected {len(sources)} relevant chunk(s)",
+                             timer.stages["retrieve"] * 1000,
+                             sources=[{key: source[key] for key in ("source", "title", "excerpt", "score")}
+                                     for source in sources])
+
+                current_stage = "assemble"
+                yield _trace(request_id, "assemble", "running", "Build grounded prompt",
+                             "Combining course notes with the student question")
                 with timer.stage("assemble"):
                     prompt = levers.build_prompt(question, chunks)
+                yield _trace(request_id, "assemble", "complete", "Build grounded prompt",
+                             f"Prepared context from {len(chunks)} note chunk(s)",
+                             timer.stages["assemble"] * 1000)
+
+                current_stage = "cache"
                 with timer.stage("cache"):
                     answer = levers.exact_get(prompt)
                 if answer is not None:
                     cache_state = "exact-hit"
+                yield _trace(request_id, "cache", "complete", "Check prompt cache",
+                             "Exact response cache hit" if answer is not None
+                             else "Cache miss · the model will generate a response",
+                             timer.stages["cache"] * 1000,
+                             result="exact-hit" if answer is not None else "miss")
 
             if answer is not None:
+                yield _trace(request_id, "route", "skipped", "Select model tier",
+                             "Skipped because no generation was needed")
+                yield _trace(request_id, "generate", "skipped", "Generate response",
+                             "Skipped because the response cache returned an answer")
                 yield _sse({"delta": answer})
             else:
+                current_stage = "route"
+                yield _trace(request_id, "route", "running", "Select model tier",
+                             "Applying the configured routing policy")
                 tier = levers.pick_tier(question)
+                yield _trace(request_id, "route", "complete", "Select model tier",
+                             f"Routed to the {tier} model tier",
+                             tier=tier)
                 pieces = []
+                current_stage = "generate"
+                yield _trace(request_id, "generate", "running", "Generate response",
+                             f"Streaming tokens from the {tier} model")
                 with timer.stage("generate"):
                     prefix = levers.static_prefix() if config.PREFIX_CACHE else None
                     async for chunk in model.generate(tier, prompt, max_tokens,
@@ -218,9 +306,19 @@ async def ask(body: Ask):
                 answer = "".join(pieces)
                 levers.exact_put(prompt, answer)
                 levers.semantic_put(question, answer, qvec)
+                yield _trace(request_id, "generate", "complete", "Generate response",
+                             f"Streamed {stats['tokens_out']} output token(s)",
+                             timer.stages["generate"] * 1000,
+                             tokens_out=stats["tokens_out"], tier=tier)
+
+            current_stage = "complete"
+            yield _trace(request_id, "complete", "complete", "Response complete",
+                         "Answer delivered to the browser",
+                         timer.compute_ms)
 
             _state["served"] += 1
             yield _sse({"stats": {
+                "request_id": request_id,
                 "queue_wait_ms": round(timer.queue_wait_ms, 1),
                 "compute_ms": round(timer.compute_ms, 1),
                 "stages_ms": {k: round(v * 1000, 1) for k, v in timer.stages.items()},
@@ -239,6 +337,8 @@ async def ask(body: Ask):
         except Exception as exc:  # noqa: BLE001
             _state["failed"] += 1
             print(f"Nimbus request failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+            yield _trace(request_id, current_stage, "failed", "Request failed",
+                         "Nimbus could not complete this request. Please try again.")
             # The HTTP status is already 200 once a stream starts. Emit a
             # machine-readable event so browsers and benchmarks do not mistake
             # a truncated stream for a successful answer.
@@ -250,12 +350,12 @@ async def ask(body: Ask):
         finally:
             # Capture the semaphore this request acquired. /reload may replace
             # the global semaphore while a streamed request is still running.
-            semaphore.release()
+            if acquired:
+                semaphore.release()
 
     return StreamingResponse(
         stream(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache",
-                 "X-Accel-Buffering": "no",
-                 "X-Queue-Wait-Ms": f"{timer.queue_wait_ms:.1f}"},
+                 "X-Accel-Buffering": "no"},
     )

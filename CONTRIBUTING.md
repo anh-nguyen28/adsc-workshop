@@ -38,53 +38,43 @@ requires additional abuse protection for any long-lived or untrusted use.
 
 ## Local setup
 
-All commands in this document run from the `adsc-workshop/` directory.
+Start by changing into the repository directory. Unless a command says
+otherwise, run commands from `adsc-workshop/`.
 
-### Prerequisites
-
-For Docker-local development:
+### Prerequisites for local Docker setup
 
 - Docker Desktop or Docker Engine with Compose v2;
 - 8 GB RAM recommended for the default Llama 3.1 8B model;
 - approximately 8 GB of free disk space for the app image, embedding model,
   and Llama weights;
-
-For the lightweight Python-local path:
-
-- Python 3.10 or newer;
-- two terminal tabs for the service and benchmark;
-- approximately 3 GB of disk space for packages and model weights;
-- network access during initial setup only.
-
-For Cloud Run deployment:
-
-- Google Cloud project with billing enabled;
-- Cloud Run, Cloud Build, Artifact Registry, Vertex AI, and Secret Manager APIs;
-- a runtime service account with Vertex AI access and access to the admin-token
-  secret;
-- `gcloud` and Git;
-- model access enabled in the selected Google Cloud region.
+- two terminal tabs and a code editor.
 
 Never commit API keys, service-account JSON files, admin tokens, populated
 deployment environment files, local model weights, the retrieval index, or
 benchmark output.
 
-### Docker-local setup (recommended; run this before cloud deployment)
+### Docker-local setup (recommended)
 
-From `adsc-workshop/`:
+#### 1. Start and verify
+
+From the parent directory containing `adsc-workshop/`, run:
 
 ```bash
+cd adsc-workshop
 make docker-up
 curl -fsS http://127.0.0.1:8000/health
-make docker-bench
 ```
 
 The first start builds the Nimbus image and downloads the default
 `llama3.1:8b` model into the named `ollama-models` volume. The download can
 take several minutes; later starts reuse the volume. The default uses one
 model for both tiers intentionally, so onboarding does not download the same
-large weights twice. Configure separate tiers only when you want to compare
-models and have enough disk and memory for both:
+large weights twice.
+
+#### Optional: compare models
+
+Configure separate tiers only when you want to compare models and have enough
+disk and memory for both:
 
 ```bash
 make docker-down
@@ -97,7 +87,7 @@ Other Ollama-compatible models can be tested by changing those two variables,
 for example `qwen2.5:7b`, `qwen2.5:14b`, or `gemma3:12b`. Confirm the selected
 model's license before redistribution or hosted commercial use.
 
-Verify the running stack and the models available to Ollama:
+#### 2. Check Docker and models
 
 ```bash
 docker compose -f docker-compose.local.yml ps -a
@@ -111,7 +101,7 @@ In Docker Desktop, use the **Containers** view to inspect `nimbus` and
 volume contains the downloaded model weights and should be kept between
 rebuilds.
 
-Try the participant API directly after `/health` succeeds:
+#### 3. Test the participant API
 
 ```bash
 curl -N -X POST http://127.0.0.1:8000/ask \
@@ -120,11 +110,15 @@ curl -N -X POST http://127.0.0.1:8000/ask \
 ```
 
 The `/ask` response is Server-Sent Events. The benchmark runs inside the
-Nimbus container, and its JSON results are mounted back into `results/`:
+Nimbus container, and its JSON results are mounted back into `results/`.
+
+#### 4. Run a smoke-test benchmark
 
 ```bash
 make docker-bench ARGS="--requests 4 --concurrency 1"
 ```
+
+#### 5. Change one setting and measure
 
 For the optimization activity, edit only
 [`01_deploy/config.py`](01_deploy/config.py), then reload and benchmark:
@@ -134,12 +128,26 @@ make docker-reload
 make docker-bench ARGS="--label 'describe the change'"
 ```
 
-No Google credentials are required for Docker-local mode. To inspect a startup
-or model error, run `make docker-logs`. A host port conflict can be solved with
-`NIMBUS_PORT=8001 make docker-up`; use port `8001` for host `curl` and metrics
-commands in that session.
+#### Troubleshooting
 
-Stop the containers when finished. This keeps the model volume:
+No Google credentials are required for Docker-local mode. To inspect a startup
+or model error:
+
+```bash
+make docker-logs
+```
+
+If port `8000` is already in use, use another host port consistently:
+
+```bash
+NIMBUS_PORT=8001 make docker-up
+curl -fsS http://127.0.0.1:8001/health
+NIMBUS_PORT=8001 make docker-metrics
+```
+
+#### Stop the local stack
+
+This keeps the model volume so the next startup is faster:
 
 ```bash
 make docker-down
@@ -150,6 +158,8 @@ weights and start the model setup again.
 
 ### Python-local setup
 
+Use this optional path when Docker is unavailable. It requires Python 3.10 or
+newer, approximately 3 GB of disk space, and network access during setup.
 Create the virtual environment, install the pinned dependencies, build the
 retrieval index, and prefetch the local model weights:
 
@@ -189,17 +199,11 @@ The `/ask` response is Server-Sent Events. It emits answer deltas, one final
 
 ### Local development loop
 
-For the optimization activity, edit only
-[`01_deploy/config.py`](01_deploy/config.py), change one setting, then reload
-and benchmark. In Docker-local mode the control file is mounted into the app
-container, so a lever change does not require an image rebuild:
+After either local setup, edit only
+[`01_deploy/config.py`](01_deploy/config.py) and change one setting at a time.
+For Docker-local mode, use the reload and benchmark commands in step 5 above.
 
-```bash
-make docker-reload
-make docker-bench ARGS="--label 'describe the change'"
-```
-
-For the Python-local path:
+For Python-local mode:
 
 ```bash
 make reload
@@ -249,6 +253,11 @@ behavior, or measured artifacts, also run an actual service smoke test and
 recalibrate the relevant facilitator artifacts.
 
 ### Cloud Run setup
+
+Cloud deployment requires a Google Cloud project with billing enabled,
+Cloud Run, Cloud Build, Artifact Registry, Vertex AI, and Secret Manager APIs,
+`gcloud` and Git, a runtime service account with Vertex AI access and access to
+the admin-token secret, and model access in the selected region.
 
 Copy the deployment template into an ignored file and fill in the cloud-owned
 values:

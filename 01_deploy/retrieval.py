@@ -20,11 +20,36 @@ with np.load(INDEX, allow_pickle=False) as _data:
 
 def search(question: str, k: int) -> list[str]:
     """Return the k most similar note chunks. Vectors are already normalised."""
+    return [item["text"] for item in search_details(question, k)]
+
+
+def search_details(question: str, k: int) -> list[dict]:
+    """Return note chunks plus safe, user-visible retrieval metadata.
+
+    The browser uses this to explain which course notes grounded an answer.
+    It intentionally returns excerpts and similarity scores, not the prompt or
+    model's private reasoning.
+    """
     if k <= 0:
         return []
     scores = _vectors @ embed_one(question)
     top = np.argsort(-scores)[:k]
-    return [_texts[i] for i in top]
+    results = []
+    for i in top:
+        text = str(_texts[i])
+        source, separator, content = text.partition("] ")
+        source = source.lstrip("[") if separator else "course notes"
+        title, separator, excerpt = content.partition(": ")
+        if not separator:
+            title, excerpt = "Course notes", content
+        results.append({
+            "text": text,
+            "source": source,
+            "title": title,
+            "excerpt": excerpt[:180].rstrip() + ("…" if len(excerpt) > 180 else ""),
+            "score": round(float(scores[i]), 3),
+        })
+    return results
 
 
 def size() -> int:

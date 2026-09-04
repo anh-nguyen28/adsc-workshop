@@ -3,99 +3,472 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Nimbus Study Assistant</title>
+  <title>Nimbus · Deployment Lab</title>
   <style>
-    :root { color-scheme: light; font-family: system-ui, sans-serif; }
-    body { margin: 0; background: #f4f6fb; color: #172033; }
-    main { width: min(760px, calc(100% - 32px)); margin: 48px auto; }
-    h1 { margin-bottom: 8px; }
-    p { color: #536079; }
-    textarea { box-sizing: border-box; width: 100%; min-height: 120px; padding: 14px;
-      border: 1px solid #c7cede; border-radius: 10px; font: inherit; resize: vertical; }
-    button { margin-top: 12px; padding: 10px 18px; border: 0; border-radius: 8px;
-      background: #3157d5; color: white; font: inherit; cursor: pointer; }
-    button:disabled { opacity: .6; cursor: wait; }
-    section { margin-top: 24px; padding: 20px; background: white; border-radius: 10px;
-      box-shadow: 0 2px 12px #17203312; }
-    #answer { min-height: 80px; white-space: pre-wrap; line-height: 1.55; }
-    #status { margin-top: 12px; font-size: .9rem; }
-    .error { color: #b42318; }
-    .stats { color: #536079; font-size: .85rem; }
+    :root {
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+        "Segoe UI", sans-serif;
+      --ink: #172033;
+      --muted: #667085;
+      --soft: #98a2b3;
+      --line: #e6eaf0;
+      --panel: #ffffff;
+      --wash: #f4f7fb;
+      --navy: #182640;
+      --blue: #3157d5;
+      --blue-soft: #e9efff;
+      --green: #079455;
+      --green-soft: #e8f8f0;
+      --amber: #b54708;
+      --amber-soft: #fff3e8;
+      --red: #b42318;
+      --red-soft: #fff0ef;
+      --shadow: 0 16px 40px rgba(27, 43, 75, .07);
+    }
+
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; background: var(--wash); color: var(--ink); }
+    button, textarea { font: inherit; }
+    button { cursor: pointer; }
+    .shell { width: min(1180px, calc(100% - 36px)); margin: 0 auto; }
+
+    header { padding: 22px 0; border-bottom: 1px solid rgba(230, 234, 240, .8); background: rgba(255, 255, 255, .74); }
+    .nav { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .brand { display: flex; align-items: center; gap: 11px; font-weight: 750; letter-spacing: -.02em; }
+    .brand-mark { width: 33px; height: 33px; display: grid; place-items: center; border-radius: 11px; color: white; background: var(--navy); font-size: 16px; box-shadow: 0 5px 13px rgba(24, 38, 64, .2); }
+    .brand small { display: block; margin-top: 2px; color: var(--soft); font-size: 10px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; }
+    .nav-meta { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+    .pill, .endpoint { display: inline-flex; align-items: center; gap: 7px; min-height: 29px; padding: 0 10px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: white; font-size: 12px; font-weight: 650; }
+    .pill.live { color: var(--green); border-color: #b6ead2; background: var(--green-soft); }
+    .pill.offline { color: var(--red); border-color: #f3c0bc; background: var(--red-soft); }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .pulse { animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .42; } }
+
+    .hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 35px; padding: 46px 0 31px; }
+    .eyebrow { color: var(--blue); font-size: 11px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+    h1 { max-width: 650px; margin: 9px 0 10px; color: var(--navy); font-size: clamp(30px, 4vw, 48px); line-height: 1.04; letter-spacing: -.045em; }
+    .hero p { max-width: 650px; margin: 0; color: var(--muted); font-size: 15px; line-height: 1.6; }
+    .service-map { min-width: 365px; padding: 17px 18px; border: 1px solid #dfe5ef; border-radius: 15px; background: rgba(255,255,255,.65); }
+    .map-label { display: flex; justify-content: space-between; margin-bottom: 13px; color: var(--soft); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    .map-flow { display: flex; align-items: center; gap: 7px; color: var(--soft); font-size: 14px; }
+    .map-node { padding: 8px 9px; border: 1px solid #dfe5ef; border-radius: 9px; color: var(--navy); background: white; font-size: 11px; font-weight: 750; white-space: nowrap; }
+    .map-node.active { border-color: #a9bafb; color: var(--blue); background: var(--blue-soft); }
+
+    .grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(390px, .95fr); gap: 18px; align-items: start; }
+    .card { border: 1px solid var(--line); border-radius: 17px; background: var(--panel); box-shadow: var(--shadow); }
+    .card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 22px 23px 0; }
+    .card-title { margin: 0; color: var(--navy); font-size: 17px; letter-spacing: -.02em; }
+    .card-kicker { margin: 5px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .ask-card { min-height: 470px; overflow: hidden; }
+    .ask-body { padding: 24px 23px; }
+    label { display: block; margin-bottom: 9px; color: var(--navy); font-size: 12px; font-weight: 750; }
+    textarea { display: block; width: 100%; min-height: 130px; padding: 14px 15px; resize: vertical; border: 1px solid #ccd4e1; border-radius: 11px; outline: none; color: var(--ink); background: #fbfcfe; line-height: 1.5; transition: border-color .15s, box-shadow .15s; }
+    textarea:focus { border-color: #8da3f2; box-shadow: 0 0 0 4px var(--blue-soft); }
+    .ask-actions { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 12px; }
+    .samples { display: flex; flex-wrap: wrap; gap: 6px; }
+    .sample { padding: 6px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); background: white; font-size: 11px; transition: border-color .15s, color .15s; }
+    .sample:hover { border-color: #a9bafb; color: var(--blue); }
+    .primary { flex: 0 0 auto; padding: 11px 17px; border: 0; border-radius: 9px; color: white; background: var(--blue); font-weight: 750; box-shadow: 0 5px 13px rgba(49,87,213,.2); }
+    .primary:hover { background: #2747b7; }
+    .primary:disabled { opacity: .58; cursor: wait; }
+    .answer-wrap { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--line); }
+    .answer-label { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .answer-label span:first-child { color: var(--navy); font-size: 12px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+    #status { color: var(--muted); font-size: 12px; }
+    #status.error { color: var(--red); }
+    #answer { min-height: 92px; color: #344054; white-space: pre-wrap; line-height: 1.65; }
+    #answer.empty { color: var(--soft); }
+
+    .trace-card { min-height: 470px; overflow: hidden; }
+    .trace-badge { display: inline-flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 7px; color: var(--muted); background: #f4f6f9; font-size: 10px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
+    .trace-badge.running { color: var(--blue); background: var(--blue-soft); }
+    .trace-badge.success { color: var(--green); background: var(--green-soft); }
+    .trace-badge.error { color: var(--red); background: var(--red-soft); }
+    .trace-meta { display: flex; justify-content: space-between; gap: 10px; margin: 20px 23px 0; padding: 10px 11px; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); background: #fafbfc; font-size: 11px; }
+    .trace-meta strong { color: var(--navy); font-weight: 750; }
+    .timeline { position: relative; margin: 19px 23px 0; padding: 0; list-style: none; }
+    .timeline::before { content: ""; position: absolute; top: 9px; bottom: 11px; left: 7px; width: 1px; background: #e2e7ef; }
+    .timeline-item { position: relative; display: grid; grid-template-columns: 15px 1fr auto; gap: 10px; min-height: 48px; }
+    .timeline-node { position: relative; z-index: 1; width: 15px; height: 15px; margin-top: 3px; border: 3px solid white; border-radius: 50%; background: #d3d9e3; box-shadow: 0 0 0 1px #d3d9e3; }
+    .timeline-item.running .timeline-node { background: var(--blue); box-shadow: 0 0 0 1px var(--blue), 0 0 0 5px var(--blue-soft); animation: pulse 1.5s infinite; }
+    .timeline-item.complete .timeline-node { background: var(--green); box-shadow: 0 0 0 1px var(--green); }
+    .timeline-item.skipped .timeline-node { background: white; box-shadow: 0 0 0 1px #aab4c3; }
+    .timeline-item.failed .timeline-node { background: var(--red); box-shadow: 0 0 0 1px var(--red); }
+    .timeline-label { color: var(--navy); font-size: 12px; font-weight: 750; }
+    .timeline-detail { margin-top: 3px; color: var(--muted); font-size: 11px; line-height: 1.4; }
+    .timeline-time { color: var(--soft); font-size: 10px; white-space: nowrap; }
+    .timeline-item.idle .timeline-label, .timeline-item.idle .timeline-detail { color: var(--soft); }
+    .timeline-item.skipped .timeline-label { color: var(--muted); }
+
+    .lower-grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(390px, .95fr); gap: 18px; margin: 18px 0 44px; }
+    .sources-card, .metrics-card { padding-bottom: 21px; }
+    .sources-body, .metrics-body { padding: 17px 23px 0; }
+    .empty-state { padding: 17px; border: 1px dashed #d7dee9; border-radius: 11px; color: var(--muted); background: #fbfcfe; font-size: 12px; line-height: 1.5; }
+    .source-list { display: grid; gap: 9px; }
+    .source { padding: 12px; border: 1px solid var(--line); border-radius: 11px; background: #fbfcfe; }
+    .source-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .source-title { color: var(--navy); font-size: 12px; font-weight: 750; }
+    .source-score { color: var(--blue); font-size: 10px; font-weight: 800; }
+    .source-meta { margin-top: 3px; color: var(--soft); font-size: 10px; }
+    .source-excerpt { margin-top: 7px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+    .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+    .metric { min-width: 0; padding: 11px; border-radius: 10px; background: #f6f8fb; }
+    .metric-label { color: var(--soft); font-size: 10px; font-weight: 750; }
+    .metric-value { overflow: hidden; margin-top: 6px; color: var(--navy); font-size: 16px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+    .latency { margin-top: 17px; }
+    .latency-head { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; }
+    .bar { display: flex; height: 9px; margin-top: 8px; overflow: hidden; border-radius: 99px; background: #eef1f5; }
+    .bar-queue { width: 0; background: #f6a45b; transition: width .4s; }
+    .bar-compute { width: 0; background: var(--blue); transition: width .4s; }
+    .legend { display: flex; gap: 14px; margin-top: 8px; color: var(--soft); font-size: 10px; }
+    .legend span { display: inline-flex; align-items: center; gap: 5px; }
+    .legend i { width: 7px; height: 7px; border-radius: 50%; background: var(--blue); }
+    .legend .queue i { background: #f6a45b; }
+    .metrics-note { margin: 15px 0 0; color: var(--muted); font-size: 11px; line-height: 1.45; }
+
+    @media (max-width: 880px) {
+      .hero { display: block; }
+      .service-map { min-width: 0; margin-top: 24px; }
+      .grid, .lower-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 520px) {
+      .shell { width: min(100% - 24px, 1180px); }
+      header { padding: 15px 0; }
+      .nav-meta { gap: 5px; }
+      .endpoint { display: none; }
+      .hero { padding-top: 31px; }
+      .map-flow { justify-content: space-between; gap: 3px; }
+      .map-node { padding: 7px 6px; font-size: 10px; }
+      .card-header, .ask-body, .sources-body, .metrics-body { padding-left: 17px; padding-right: 17px; }
+      .trace-meta, .timeline { margin-left: 17px; margin-right: 17px; }
+      .ask-actions { align-items: stretch; flex-direction: column; }
+      .primary { width: 100%; }
+      .metric-grid { grid-template-columns: repeat(2, 1fr); }
+    }
   </style>
 </head>
 <body>
-  <main>
-    <h1>Nimbus</h1>
-    <p>Ask a question about the course notes.</p>
-    <form id="ask-form">
-      <textarea id="question" required placeholder="What is overfitting?"></textarea>
-      <button id="submit" type="submit">Ask Nimbus</button>
-    </form>
-    <section>
-      <div id="answer" aria-live="polite">Your answer will appear here.</div>
-      <div id="status"></div>
+  <header>
+    <div class="shell nav">
+      <div class="brand">
+        <div class="brand-mark">N</div>
+        <div>Nimbus <small>deployment lab</small></div>
+      </div>
+      <div class="nav-meta">
+        <span id="service-pill" class="pill"><span class="dot pulse"></span><span id="service-status">Checking service…</span></span>
+        <span class="endpoint">POST /ask</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <div class="eyebrow">Deployment activity · live request trace</div>
+        <h1>Ask the deployed assistant. Watch the request work.</h1>
+        <p>Nimbus exposes the operational path behind each answer—capacity, retrieval, routing and generation—so teams can diagnose the service before changing it.</p>
+      </div>
+      <div class="service-map" aria-label="Nimbus service path">
+        <div class="map-label"><span>Request path</span><span id="service-summary">readiness check</span></div>
+        <div class="map-flow">
+          <span class="map-node active">Browser</span><span>→</span>
+          <span class="map-node">/ask</span><span>→</span>
+          <span class="map-node">RAG</span><span>→</span>
+          <span class="map-node active">Model</span>
+        </div>
+      </div>
     </section>
+
+    <div class="grid">
+      <section class="card ask-card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Ask Nimbus</h2>
+            <p class="card-kicker">Send a real request to the deployed service.</p>
+          </div>
+          <span class="trace-badge">student-facing</span>
+        </div>
+        <div class="ask-body">
+          <form id="ask-form">
+            <label for="question">Question</label>
+            <textarea id="question" required placeholder="What is overfitting?"></textarea>
+            <div class="ask-actions">
+              <div class="samples" aria-label="Example questions">
+                <button class="sample" type="button" data-question="What is overfitting?">Try an example</button>
+                <button class="sample" type="button" data-question="What does the learning rate do?">Learning rate</button>
+              </div>
+              <button id="submit" class="primary" type="submit">Ask Nimbus</button>
+            </div>
+          </form>
+
+          <div class="answer-wrap">
+            <div class="answer-label"><span>Assistant response</span><span id="status">Ready for a request.</span></div>
+            <div id="answer" class="empty" aria-live="polite">Your grounded answer will appear here as Nimbus streams it.</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card trace-card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Deployment activity</h2>
+            <p class="card-kicker">A safe operational view of this request.</p>
+          </div>
+          <span id="trace-badge" class="trace-badge">waiting</span>
+        </div>
+        <div class="trace-meta"><span>request <strong id="request-id">—</strong></span><span>endpoint <strong>/ask</strong></span></div>
+        <ol id="timeline" class="timeline" aria-live="polite"></ol>
+      </section>
+    </div>
+
+    <div class="lower-grid">
+      <section class="card sources-card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Grounding sources</h2>
+            <p class="card-kicker">Course-note chunks selected for the last request.</p>
+          </div>
+        </div>
+        <div id="sources" class="sources-body">
+          <div class="empty-state">Ask a question to see which indexed notes grounded the answer. Nimbus exposes excerpts, not its private reasoning.</div>
+        </div>
+      </section>
+
+      <section class="card metrics-card">
+        <div class="card-header">
+          <div>
+            <h2 class="card-title">Observed request</h2>
+            <p class="card-kicker">The numbers that explain where time went.</p>
+          </div>
+        </div>
+        <div class="metrics-body">
+          <div class="metric-grid">
+            <div class="metric"><div class="metric-label">Queue wait</div><div id="queue-metric" class="metric-value">—</div></div>
+            <div class="metric"><div class="metric-label">Compute</div><div id="compute-metric" class="metric-value">—</div></div>
+            <div class="metric"><div class="metric-label">Model tier</div><div id="tier-metric" class="metric-value">—</div></div>
+            <div class="metric"><div class="metric-label">Cache</div><div id="cache-metric" class="metric-value">—</div></div>
+          </div>
+          <div class="latency">
+            <div class="latency-head"><span>Latency split</span><span id="latency-total">No request yet</span></div>
+            <div class="bar"><div id="queue-bar" class="bar-queue"></div><div id="compute-bar" class="bar-compute"></div></div>
+            <div class="legend"><span class="queue"><i></i>queue wait</span><span><i></i>compute</span></div>
+          </div>
+          <p id="metrics-note" class="metrics-note">This split is the workshop’s key diagnostic: a slow queue and a slow model need different fixes.</p>
+        </div>
+      </section>
+    </div>
   </main>
+
   <script>
     const form = document.querySelector('#ask-form');
     const question = document.querySelector('#question');
     const answer = document.querySelector('#answer');
     const status = document.querySelector('#status');
     const submit = document.querySelector('#submit');
+    const timeline = document.querySelector('#timeline');
+    const traceBadge = document.querySelector('#trace-badge');
+    const requestId = document.querySelector('#request-id');
+    const sources = document.querySelector('#sources');
+    const servicePill = document.querySelector('#service-pill');
+    const serviceStatus = document.querySelector('#service-status');
+    const serviceSummary = document.querySelector('#service-summary');
+    const stages = [
+      {stage: 'request', label: 'Request received', idle: 'Waiting for a request'},
+      {stage: 'queue', label: 'Capacity check', idle: 'Waiting for an inference slot'},
+      {stage: 'cache', label: 'Check response cache', idle: 'Looking for reusable work'},
+      {stage: 'retrieve', label: 'Retrieve course notes', idle: 'Searching the indexed notes'},
+      {stage: 'assemble', label: 'Build grounded prompt', idle: 'Combining notes and question'},
+      {stage: 'route', label: 'Select model tier', idle: 'Applying routing policy'},
+      {stage: 'generate', label: 'Generate response', idle: 'Streaming the answer'},
+      {stage: 'complete', label: 'Response complete', idle: 'Delivering the answer'}
+    ];
+    let trace = {};
+    let lastTraceStage = 'request';
+    let hasRequest = false;
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>'"]/g, (char) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+      }[char]));
+    }
+
+    function formatMs(value) {
+      if (value === undefined || value === null || Number.isNaN(Number(value))) return '—';
+      const number = Number(value);
+      return number < 1000 ? `${number.toFixed(0)} ms` : `${(number / 1000).toFixed(2)} s`;
+    }
+
+    function renderTimeline() {
+      timeline.innerHTML = stages.map((definition) => {
+        const event = trace[definition.stage];
+        const state = event?.state || 'idle';
+        const detail = event?.detail || definition.idle;
+        const duration = event?.duration_ms !== undefined ? formatMs(event.duration_ms) : '';
+        const label = event?.label || definition.label;
+        return `<li class="timeline-item ${state}">
+          <span class="timeline-node" aria-hidden="true"></span>
+          <div><div class="timeline-label">${escapeHtml(label)}</div><div class="timeline-detail">${escapeHtml(detail)}</div></div>
+          <span class="timeline-time">${escapeHtml(duration)}</span>
+        </li>`;
+      }).join('');
+    }
+
+    function renderSources(items) {
+      if (!items || !items.length) {
+        sources.innerHTML = '<div class="empty-state">No note chunks were selected for this request.</div>';
+        return;
+      }
+      sources.innerHTML = `<div class="source-list">${items.map((item) => `<article class="source">
+        <div class="source-head"><span class="source-title">${escapeHtml(item.title)}</span><span class="source-score">match ${escapeHtml(item.score)}</span></div>
+        <div class="source-meta">${escapeHtml(item.source)}</div>
+        <div class="source-excerpt">${escapeHtml(item.excerpt)}</div>
+      </article>`).join('')}</div>`;
+    }
+
+    function setTraceBadge(label, state) {
+      traceBadge.textContent = label;
+      traceBadge.className = `trace-badge ${state || ''}`;
+    }
+
+    function resetRequestView() {
+      trace = {};
+      hasRequest = true;
+      lastTraceStage = 'request';
+      requestId.textContent = 'starting…';
+      setTraceBadge('starting', 'running');
+      answer.textContent = '';
+      answer.className = '';
+      status.className = '';
+      status.textContent = 'Request is moving through Nimbus…';
+      document.querySelector('#queue-metric').textContent = '—';
+      document.querySelector('#compute-metric').textContent = '—';
+      document.querySelector('#tier-metric').textContent = '—';
+      document.querySelector('#cache-metric').textContent = '—';
+      document.querySelector('#latency-total').textContent = 'In progress';
+      document.querySelector('#queue-bar').style.width = '0%';
+      document.querySelector('#compute-bar').style.width = '0%';
+      renderSources([]);
+      renderTimeline();
+    }
+
+    function applyTrace(event) {
+      hasRequest = true;
+      lastTraceStage = event.stage || lastTraceStage;
+      if (event.request_id) requestId.textContent = event.request_id;
+      if (event.stage) trace[event.stage] = event;
+      if (event.meta?.sources) renderSources(event.meta.sources);
+      if (event.state === 'running') setTraceBadge('in progress', 'running');
+      if (event.state === 'complete') setTraceBadge('request active', 'running');
+      if (event.state === 'failed') setTraceBadge('failed', 'error');
+      renderTimeline();
+    }
+
+    function updateMetrics(stats) {
+      const queue = Number(stats.queue_wait_ms || 0);
+      const compute = Number(stats.compute_ms || 0);
+      const total = queue + compute;
+      document.querySelector('#queue-metric').textContent = formatMs(queue);
+      document.querySelector('#compute-metric').textContent = formatMs(compute);
+      document.querySelector('#tier-metric').textContent = stats.tier === '-' ? 'cache' : (stats.tier || '—');
+      document.querySelector('#cache-metric').textContent = (stats.cache || 'miss').replace('-', ' ');
+      document.querySelector('#latency-total').textContent = `total ${formatMs(total)}`;
+      document.querySelector('#queue-bar').style.width = `${total ? (queue / total) * 100 : 0}%`;
+      document.querySelector('#compute-bar').style.width = `${total ? (compute / total) * 100 : 0}%`;
+      const dominant = queue > compute ? 'Queue wait is the larger cost here—look at capacity before changing the model.' : 'Compute is the larger cost here—look at work per request before adding capacity.';
+      document.querySelector('#metrics-note').textContent = `${dominant} Request ${stats.request_id || ''}`;
+    }
+
+    async function checkHealth() {
+      try {
+        const response = await fetch('/health', {cache: 'no-store'});
+        if (!response.ok) throw new Error('health check failed');
+        const health = await response.json();
+        servicePill.className = 'pill live';
+        serviceStatus.textContent = 'Service live';
+        serviceSummary.textContent = `${health.backend} · ${health.note_chunks} note chunks`;
+      } catch (error) {
+        servicePill.className = 'pill offline';
+        serviceStatus.textContent = 'Service unavailable';
+        serviceSummary.textContent = 'readiness check failed';
+      }
+    }
+
+    document.querySelectorAll('[data-question]').forEach((button) => {
+      button.addEventListener('click', () => {
+        question.value = button.dataset.question;
+        question.focus();
+      });
+    });
 
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
       submit.disabled = true;
-      answer.textContent = '';
-      status.className = '';
-      status.textContent = 'Thinking…';
+      submit.textContent = 'Running…';
+      resetRequestView();
+      let stats = null;
+      let serviceError = null;
       try {
         const response = await fetch('/ask', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({question: question.value})
         });
-        if (!response.ok) throw new Error(`Request failed (${response.status})`);
+        if (!response.ok) {
+          let detail = `Request failed (${response.status})`;
+          try {
+            const errorBody = await response.json();
+            if (errorBody.error === 'overloaded') detail = 'Nimbus is at capacity. Retry in a moment.';
+            else if (errorBody.error) detail = errorBody.error;
+          } catch (ignored) { /* Keep the HTTP status message. */ }
+          throw new Error(detail);
+        }
+        if (!response.body) throw new Error('The service returned no response stream');
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = '';
-        let stats = null;
-        let serviceError = null;
-        if (!response.body) throw new Error('The service returned no response stream');
         while (true) {
           const {value, done} = await reader.read();
           buffer += decoder.decode(value || new Uint8Array(), {stream: !done});
-          const events = buffer.split('\n\n');
+          const events = buffer.split(/\r?\n\r?\n/);
           buffer = events.pop();
           for (const eventText of events) {
-            const line = eventText.split('\n').find(line => line.startsWith('data: '));
-            if (!line || line === 'data: [DONE]') continue;
-            const payload = JSON.parse(line.slice(6));
+            const data = eventText.split(/\r?\n/).filter((line) => line.startsWith('data: ')).map((line) => line.slice(6)).join('\n');
+            if (!data || data === '[DONE]') continue;
+            const payload = JSON.parse(data);
+            if (payload.trace) applyTrace(payload.trace);
             if (payload.delta) answer.textContent += payload.delta;
             if (payload.stats) stats = payload.stats;
-            if (payload.error) {
-              serviceError = typeof payload.error === 'string'
-                ? payload.error : payload.error.message;
-            }
+            if (payload.error) serviceError = typeof payload.error === 'string' ? payload.error : payload.error.message;
           }
           if (done) break;
         }
         if (serviceError) throw new Error(serviceError);
         if (!stats) throw new Error('The service ended before returning statistics');
-        status.textContent = stats
-          ? `Finished in ${stats.compute_ms.toFixed(0)} ms · ${stats.tokens_out} output tokens`
-          : 'Finished';
-        if (stats && stats.usage_source === 'unreported') {
-          status.textContent += ' · provider usage not reported';
-        }
+        updateMetrics(stats);
+        status.textContent = `Finished in ${formatMs(stats.compute_ms)} · ${stats.tokens_out} output token(s)`;
+        if (stats.usage_source === 'unreported') status.textContent += ' · provider usage not reported';
+        setTraceBadge('completed', 'success');
       } catch (error) {
         answer.textContent = '';
+        answer.className = 'empty';
         status.className = 'error';
         status.textContent = error.message;
+        setTraceBadge('failed', 'error');
+        if (hasRequest) {
+          trace[lastTraceStage] = {stage: lastTraceStage, state: 'failed', label: 'Request failed', detail: error.message};
+          renderTimeline();
+        }
       } finally {
         submit.disabled = false;
+        submit.textContent = 'Ask Nimbus';
+        checkHealth();
       }
     });
+
+    renderTimeline();
+    checkHealth();
+    window.setInterval(checkHealth, 30000);
   </script>
 </body>
 </html>

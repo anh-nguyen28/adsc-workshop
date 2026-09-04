@@ -74,6 +74,17 @@ You get a stream of text, and then a final event with the numbers that matter:
            "cache": "miss", "tier": "large"}}
 ```
 
+Open `http://127.0.0.1:8000/` in a browser for the participant deployment
+activity view. It checks `/health` to show whether the service is live, then
+renders a request trace as the answer streams: capacity check, cache lookup,
+course-note retrieval, prompt assembly, model routing, generation, and
+completion. The trace also shows the note excerpts selected for grounding and
+the queue-wait versus compute split. These are operational signals, not the
+model's private reasoning.
+
+The SSE stream includes `trace` events in addition to answer deltas and the
+final `stats` event. Existing clients can ignore them; the benchmark does.
+
 ## 5. Put it on the internet (optional, Codespaces only)
 
 ```bash
